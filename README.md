@@ -13,7 +13,7 @@ machine (the one running the server). One interracts with the server using the
 stateless CLI client.
 
 Additionally, `jobserver` supports the following:
-- An awesome CLI client.
+- An awesome CLI client, with the ability to generate shell completion scripts.
 - Machine classes: similar machines are added to the same class, and jobs are
   scheduled to run on any machine in the class.
 - Machine setup: the `jobserver` can run a sequence of setup machines and
