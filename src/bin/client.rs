@@ -13,14 +13,32 @@ use jobserver::{
 
 use prettytable::{cell, row, Table};
 
-fn main() {
-    let matches = clap_app! { client =>
+fn build_cli() -> clap::App<'static, 'static> {
+    {clap_app! { client =>
         (about: "CLI client for the jobserver")
         (@arg ADDR: --address +takes_value
          "The server IP:PORT (defaults to `localhost:3030`)")
 
         (@subcommand ping =>
             (about: "Ping the server")
+        )
+
+        (@subcommand completions =>
+            (about: "Produce shell completion scripts for the client")
+            (@arg OUTDIR: +required
+             "The directory to generate the completions script to.")
+            (@group SHELL =>
+                (@attributes +required)
+                (@arg bash: --bash "Generate bash completions")
+                (@arg fish: --fish "Generate fish completions")
+                (@arg zsh: --zsh "Generate zsh completions")
+                (@arg powershell: --powershell "Generate powershell completions")
+                (@arg elvish: --elvish "Generate elvish completions")
+            )
+            (@arg BIN: --bin +takes_value
+             "The name of the binary or alias by which the client is invoked. For example, if you \
+             alias `j` as the client, you should pass this flag with the value `j`."
+            )
         )
 
         (@subcommand machine =>
@@ -147,10 +165,13 @@ fn main() {
                 )
             )
         )
-    }
+    }}
     .setting(clap::AppSettings::SubcommandRequired)
     .setting(clap::AppSettings::DisableVersion)
-    .get_matches();
+}
+
+fn main() {
+    let matches = build_cli().get_matches();
 
     let addr = matches.value_of("ADDR").unwrap_or(SERVER_ADDR);
 
@@ -164,6 +185,25 @@ fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>) {
             println!("Server response: {:?}", response);
         }
 
+        ("completions", Some(sub_m)) => {
+            let bin = sub_m.value_of("BIN");
+            let outdir = sub_m.value_of("OUTDIR").unwrap();
+            let shell = if sub_m.is_present("bash") {
+                clap::Shell::Bash
+            } else if sub_m.is_present("fish") {
+                clap::Shell::Fish
+            } else if sub_m.is_present("zsh") {
+                clap::Shell::Zsh
+            } else if sub_m.is_present("powershell") {
+                clap::Shell::PowerShell
+            } else if sub_m.is_present("elvish") {
+                clap::Shell::Elvish
+            } else {
+                unreachable!()
+            };
+            generate_completions(shell, outdir, bin);
+        }
+
         ("machine", Some(sub_m)) => handle_machine_cmd(addr, sub_m),
 
         ("var", Some(sub_m)) => handle_var_cmd(addr, sub_m),
@@ -172,6 +212,10 @@ fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         _ => unreachable!(),
     }
+}
+
+fn generate_completions(shell: clap::Shell, outdir: &str, bin: Option<&str>) {
+    build_cli().gen_completions(bin.unwrap_or("client"), shell, outdir)
 }
 
 fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
