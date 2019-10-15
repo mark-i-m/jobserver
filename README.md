@@ -39,7 +39,7 @@ The debug build seems to be fast enough for ordinary use.
 Running the server:
 
 ```console
-> cargo run --bin server -- /path/to/experiment/driver
+> cargo run --bin server -- /path/to/experiment/driver /path/to/log4rs/config.yaml
 ```
 
 You may want to run this in a `screen` or `tmux` session or something.
@@ -58,3 +58,46 @@ can just run commands like:
 ```console
 > j job ls
 ```
+
+# Server Logging
+
+The server uses the [`log4rs`][l4rs] library for logging. It is highly configurable.
+
+[l4rs]: https://crates.io/crates/log4rs
+
+I use the following config:
+
+```yaml
+# Check this file for config changes every 30 seconds
+refresh_rate: 30 seconds
+
+# Write log records to stdout and to the logfile
+appenders:
+  stdout:
+    kind: console
+    # Format of the log entries
+    encoder:
+      pattern: "[{d} {h({l})}] {f}:{L} {m}{n}"
+
+  logfile:
+    kind: file
+    path: "/nobackup/scratch/jobserver.log"
+    encoder:
+      pattern: "[{d} {h({l})}] {f}:{L} {m}{n}"
+    # To keep logs compact, don't write debugging info
+    filters:
+      - compact:
+        kind: threshold
+        level: info
+
+loggers:
+  # All log entries from the `server` binary go to the stdout and logfile appenders
+  server:
+    level: debug
+    appenders:
+      - stdout
+      - logfile
+```
+
+Save these contents to a file and point the server to it using the second
+argument in the command.

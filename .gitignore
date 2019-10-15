@@ -2,3 +2,5 @@ target/
 
 *.swp
 *.swo
+
+log4rs.yaml

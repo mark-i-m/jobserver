@@ -1139,6 +1139,8 @@ fn main() {
         (about: "Serves jobs to machines")
         (@arg RUNNER: +required
          "Path to the runner cargo workspace")
+        (@arg LOGGING_CONFIG: +required
+         "Path to the log4rs config file")
         (@arg ADDR: --addr +takes_value
          "The IP:ADDR for the server to listen on for commands \
          (defaults to `localhost:3030`)")
@@ -1146,10 +1148,11 @@ fn main() {
     .get_matches();
 
     let addr = matches.value_of("ADDR").unwrap_or(SERVER_ADDR.into());
+    let logging_config = matches.value_of("LOGGING_CONFIG").unwrap();
     let runner = matches.value_of("RUNNER").unwrap();
 
     // Start logger
-    env_logger::init();
+    log4rs::init_file(logging_config, Default::default()).expect("Unable to init logger");
 
     info!("Starting server at {}", addr);
 
