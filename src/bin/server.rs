@@ -1031,10 +1031,9 @@ impl Server {
             .open(&stderr_file_name)?;
 
         // Run the command, piping output to a buf reader.
-        let mut child = std::process::Command::new("cargo")
-            .args(&["run", "--", "--print_results_path"])
+        let mut child = std::process::Command::new(runner)
+            .arg("--print_results_path")
             .args(&cmd.split_whitespace().collect::<Vec<_>>())
-            .current_dir(runner)
             .stdout(Stdio::piped())
             .stderr(Stdio::from(stderr_file))
             .spawn()?;
@@ -1138,7 +1137,8 @@ fn main() {
     let matches = clap_app! { jobserver =>
         (about: "Serves jobs to machines")
         (@arg RUNNER: +required
-         "Path to the runner cargo workspace")
+         "Path to the runner binary. This binary is provided with \
+         the arguments of the submitted job command.")
         (@arg LOGGING_CONFIG: +required
          "Path to the log4rs config file")
         (@arg ADDR: --addr +takes_value
