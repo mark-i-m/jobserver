@@ -438,7 +438,8 @@ fn get_job_log_path(addr: &str, jid: &str) {
             }
             | Status::Running { machine } => {
                 let cmd = cmd_replace_machine(&cmd_replace_vars(&cmd, &variables), &machine);
-                let path = cmd_to_path(&cmd);
+                let jid = jid.parse().unwrap();
+                let path = cmd_to_path(jid, &cmd);
                 println!("{}", path);
             }
 

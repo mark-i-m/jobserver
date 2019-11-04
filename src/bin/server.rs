@@ -1016,18 +1016,14 @@ impl Server {
         let cmd = cmd_replace_machine(&cmd_replace_vars(&cmd, variables), &machine);
 
         // Open a tmp file for the cmd output
-        let tmp_file_name = cmd_to_path(&cmd);
+        let tmp_file_name = format!("{}", cmd_to_path(jid, &cmd));
         let mut tmp_file = OpenOptions::new()
             .truncate(true)
             .write(true)
             .create(true)
             .open(&tmp_file_name)?;
 
-        let timestamp = chrono::offset::Local::now()
-            .format("%Y-%m-%d-%H-%M-%S")
-            .to_string();
-
-        let stderr_file_name = format!("{}-{}.err", timestamp, tmp_file_name);
+        let stderr_file_name = format!("{}.err", tmp_file_name);
         let stderr_file = OpenOptions::new()
             .truncate(true)
             .write(true)

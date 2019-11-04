@@ -218,9 +218,10 @@ pub fn cmd_replace_machine(cmd: &str, machine: &str) -> String {
     cmd.replace("{MACHINE}", &machine)
 }
 
-pub fn cmd_to_path(cmd: &str) -> String {
+pub fn cmd_to_path(jid: usize, cmd: &str) -> String {
     let mut name = format!(
-        "/tmp/{}",
+        "/tmp/{}-{}",
+        jid,
         cmd.replace(" ", "_")
             .replace("{", "_")
             .replace("}", "_")
