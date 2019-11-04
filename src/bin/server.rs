@@ -1023,7 +1023,11 @@ impl Server {
             .create(true)
             .open(&tmp_file_name)?;
 
-        let stderr_file_name = format!("{}.err", tmp_file_name);
+        let timestamp = chrono::offset::Local::now()
+            .format("%Y-%m-%d-%H-%M-%S")
+            .to_string();
+
+        let stderr_file_name = format!("{}-{}.err", timestamp, tmp_file_name);
         let stderr_file = OpenOptions::new()
             .truncate(true)
             .write(true)
