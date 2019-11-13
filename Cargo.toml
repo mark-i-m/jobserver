@@ -1,10 +1,17 @@
 [package]
 name = "jobserver"
 version = "0.1.0"
-authors = ["Mark Mansi <markm@cs.wisc.edu>"]
+authors = ["mark-i-m"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT/Apache-2.0"
+readme = "README.md"
+keywords = ["job server", "jobs", "tasks", "cluster", "automate", "experiments", "cluster manager"]
+repository = "https://github.com/mark-i-m/jobserver"
+description = """
+This is a job server and client for running many experiments across many test
+platforms. In some sense, it is like a simple cluster manager.
+"""
+categories = ["science"]
 
 [dependencies]
 serde = { version = "1.0.94", features = ["derive"] }
