@@ -128,7 +128,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand log =>
                 (about: "Print the path to the job log.")
-                (@arg JID: +required {is_usize}
+                (@arg JID: +required {is_usize} ...
                  "The job ID of the job for which to print the log.")
             )
 
@@ -299,8 +299,12 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("log", Some(sub_m)) => {
-            let jid = sub_m.value_of("JID").unwrap();
-            get_job_log_path(addr, jid)
+            let paths: Vec<_> = sub_m
+                .values_of("JID")
+                .unwrap()
+                .map(|jid| get_job_log_path(addr, jid))
+                .collect();
+            println!("{}", paths.join(" "));
         }
 
         ("add", Some(sub_m)) => {
@@ -417,7 +421,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     }
 }
 
-fn get_job_log_path(addr: &str, jid: &str) {
+fn get_job_log_path(addr: &str, jid: &str) -> String {
     let req = JobServerReq::JobStatus {
         jid: jid.parse().unwrap(),
     };
@@ -440,17 +444,13 @@ fn get_job_log_path(addr: &str, jid: &str) {
                 let cmd = cmd_replace_machine(&cmd_replace_vars(&cmd, &variables), &machine);
                 let jid = jid.parse().unwrap();
                 let path = cmd_to_path(jid, &cmd);
-                println!("{}", path);
+                format!("{}", path)
             }
 
-            _ => {
-                println!("/dev/null");
-            }
+            _ => format!("/dev/null"),
         },
 
-        resp => {
-            println!("{:?}", resp);
-        }
+        resp => format!("{:?}", resp),
     }
 }
 
