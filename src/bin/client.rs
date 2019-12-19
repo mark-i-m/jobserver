@@ -13,6 +13,37 @@ use jobserver::{
 
 use prettytable::{cell, row, Table};
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Jid(usize);
+
+impl Jid {
+    fn new(jid: usize) -> Self {
+        Jid(jid)
+    }
+
+    fn jid(self) -> usize {
+        self.0
+    }
+}
+
+impl<S: AsRef<str>> From<S> for Jid {
+    fn from(jid: S) -> Self {
+        Jid(jid.as_ref().parse().expect("Unable to parse as usize"))
+    }
+}
+
+impl From<Jid> for usize {
+    fn from(jid: Jid) -> Self {
+        jid.0
+    }
+}
+
+impl std::fmt::Display for Jid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 fn build_cli() -> clap::App<'static, 'static> {
     {clap_app! { client =>
         (about: "CLI client for the jobserver")
@@ -128,8 +159,13 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand log =>
                 (about: "Print the path to the job log.")
-                (@arg JID: +required {is_usize} ...
-                 "The job ID of the job for which to print the log.")
+                (@group WHICH =>
+                    (@attributes +required)
+                    (@arg JID: {is_usize} ...
+                     "The job ID of the job for which to print the log path.")
+                    (@arg RUNNING: -r --running
+                     "Print the log path of all running jobs")
+                )
             )
 
             (@subcommand matrix =>
@@ -291,7 +327,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("stat", Some(sub_m)) => {
             let req = JobServerReq::JobStatus {
-                jid: sub_m.value_of("JID").unwrap().parse().unwrap(),
+                jid: Jid::from(sub_m.value_of("JID").unwrap()).into(),
             };
 
             let response = make_request(addr, req);
@@ -299,9 +335,22 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("log", Some(sub_m)) => {
-            let paths: Vec<_> = sub_m
-                .values_of("JID")
-                .unwrap()
+            let jids: Vec<_> = if sub_m.is_present("JID") {
+                sub_m.values_of("JID").unwrap().map(Jid::from).collect()
+            } else {
+                list_jobs(addr)
+                    .into_iter()
+                    .filter_map(|job| {
+                        if let Status::Running { .. } = job.status {
+                            Some(Jid::from(job.jid))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+            let paths: Vec<_> = jids
+                .into_iter()
                 .map(|jid| get_job_log_path(addr, jid))
                 .collect();
             println!("{}", paths.join(" "));
@@ -323,7 +372,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 let response = make_request(
                     addr,
                     JobServerReq::CancelJob {
-                        jid: jid.parse().unwrap(),
+                        jid: Jid::from(jid).into(),
                     },
                 );
                 println!("Server response: {:?}", response);
@@ -335,7 +384,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 let response = make_request(
                     addr,
                     JobServerReq::CloneJob {
-                        jid: jid.parse().unwrap(),
+                        jid: Jid::from(jid).into(),
                     },
                 );
                 println!("Server response: {:?}", response);
@@ -384,7 +433,8 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             );
 
             match response {
-                JobServerResp::MatrixStatus { mut jobs, .. } => {
+                JobServerResp::MatrixStatus { jobs, .. } => {
+                    let mut jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = stat_jobs(addr, &mut jobs);
                     print_jobs(jobs, is_long);
                 }
@@ -404,12 +454,13 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
             match response {
                 JobServerResp::MatrixStatus {
-                    mut jobs,
+                    jobs,
                     cp_results: _cp_results,
                     id,
                     variables,
                     ..
                 } => {
+                    let mut jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = stat_jobs(addr, &mut jobs);
                     make_matrix_csv(file, id, variables, jobs);
                 }
@@ -421,10 +472,8 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     }
 }
 
-fn get_job_log_path(addr: &str, jid: &str) -> String {
-    let req = JobServerReq::JobStatus {
-        jid: jid.parse().unwrap(),
-    };
+fn get_job_log_path(addr: &str, jid: Jid) -> String {
+    let req = JobServerReq::JobStatus { jid: jid.into() };
 
     let status = make_request(addr, req);
 
@@ -442,8 +491,7 @@ fn get_job_log_path(addr: &str, jid: &str) -> String {
             }
             | Status::Running { machine } => {
                 let cmd = cmd_replace_machine(&cmd_replace_vars(&cmd, &variables), &machine);
-                let jid = jid.parse().unwrap();
-                let path = cmd_to_path(jid, &cmd);
+                let path = cmd_to_path(jid.into(), &cmd);
                 format!("{}", path)
             }
 
@@ -481,7 +529,7 @@ fn make_request(server_addr: &str, request: JobServerReq) -> JobServerResp {
 struct JobInfo {
     class: String,
     cmd: String,
-    jid: usize,
+    jid: Jid,
     status: Status,
     variables: HashMap<String, String>,
 }
@@ -489,20 +537,20 @@ struct JobInfo {
 fn list_jobs(addr: &str) -> Vec<JobInfo> {
     let job_ids = make_request(addr, JobServerReq::ListJobs);
 
-    if let JobServerResp::Jobs(mut job_ids) = job_ids {
-        stat_jobs(addr, &mut job_ids)
+    if let JobServerResp::Jobs(jids) = job_ids {
+        stat_jobs(addr, &mut jids.into_iter().map(Jid::new).collect())
     } else {
         unreachable!();
     }
 }
 
-fn stat_jobs(addr: &str, jids: &mut Vec<usize>) -> Vec<JobInfo> {
+fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
     // Sort by jid
     jids.sort();
 
     jids.iter()
         .filter_map(|jid| {
-            let status = make_request(addr, JobServerReq::JobStatus { jid: *jid });
+            let status = make_request(addr, JobServerReq::JobStatus { jid: jid.jid() });
 
             if let JobServerResp::JobStatus {
                 class,
@@ -515,7 +563,7 @@ fn stat_jobs(addr: &str, jids: &mut Vec<usize>) -> Vec<JobInfo> {
                 Some(JobInfo {
                     class,
                     cmd,
-                    jid,
+                    jid: Jid::new(jid),
                     status,
                     variables,
                 })
@@ -562,7 +610,7 @@ fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
                 MachineInfo {
                     addr: machine,
                     class,
-                    running,
+                    running: running.map(Jid::jid),
                 }
             })
             .collect();
