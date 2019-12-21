@@ -45,8 +45,11 @@ impl std::fmt::Display for Jid {
 }
 
 fn build_cli() -> clap::App<'static, 'static> {
-    {clap_app! { client =>
+    clap_app! { client =>
         (about: "CLI client for the jobserver")
+        (@setting SubcommandRequired)
+        (@setting DisableVersion)
+
         (@arg ADDR: --address +takes_value
          "The server IP:PORT (defaults to `localhost:3030`)")
 
@@ -74,6 +77,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
         (@subcommand machine =>
             (about: "Operations on the available pool of machines.")
+            (@setting SubcommandRequired)
 
             (@subcommand add =>
                 (about: "Make the given machine available with the given class.")
@@ -106,6 +110,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
         (@subcommand var =>
             (about: "Operations on variables.")
+            (@setting SubcommandRequired)
 
             (@subcommand ls =>
                 (about: "List variables and their values.")
@@ -122,6 +127,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
         (@subcommand job =>
             (about: "Operations on jobs.")
+            (@setting SubcommandRequired)
 
             (@subcommand add =>
                 (about: "Add a job to be run on the given class of machine.")
@@ -170,6 +176,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand matrix =>
                 (about: "Operations with job matrices")
+                (@setting SubcommandRequired)
 
                 (@subcommand add =>
                     (about: "Create a matrix of jobs on the given class of machine.")
@@ -201,9 +208,7 @@ fn build_cli() -> clap::App<'static, 'static> {
                 )
             )
         )
-    }}
-    .setting(clap::AppSettings::SubcommandRequired)
-    .setting(clap::AppSettings::DisableVersion)
+    }
 }
 
 fn main() {
