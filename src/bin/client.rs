@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 
+#[cfg(target_family = "unix")]
+use std::os::unix::process::CommandExt;
+
 use clap::clap_app;
 
 use jobserver::{
@@ -172,6 +175,10 @@ fn build_cli() -> clap::App<'static, 'static> {
                     (@arg RUNNING: -r --running
                      "Print the log path of all running jobs")
                 )
+                (@arg LESS: -l --less conflicts_with[TAIL]
+                 "Pass the log path to `less`")
+                (@arg TAIL: -t --tail conflicts_with[LESS]
+                 "Pass the log path to `tail -f`")
             )
 
             (@subcommand matrix =>
@@ -358,7 +365,36 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .into_iter()
                 .map(|jid| get_job_log_path(addr, jid))
                 .collect();
-            println!("{}", paths.join(" "));
+
+            if sub_m.is_present("LESS") {
+                #[cfg(target_family = "unix")]
+                {
+                    let error = std::process::Command::new("less").args(&paths).exec();
+                    println!("exec error: {:?}", error);
+                }
+
+                #[cfg(not(target_family = "unix"))]
+                {
+                    println!("`less` only supported on *nix platforms");
+                }
+            } else if sub_m.is_present("TAIL") {
+                #[cfg(target_family = "unix")]
+                {
+                    let error = std::process::Command::new("tail")
+                        .arg("-f")
+                        .args(&paths)
+                        .exec();
+
+                    println!("exec error: {:?}", error);
+                }
+
+                #[cfg(not(target_family = "unix"))]
+                {
+                    println!("`tail` only supported on *nix platforms");
+                }
+            } else {
+                println!("{}", paths.join(" "));
+            }
         }
 
         ("add", Some(sub_m)) => {
