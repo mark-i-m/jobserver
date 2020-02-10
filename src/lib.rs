@@ -195,8 +195,8 @@ pub enum Status {
         output: Option<String>,
     },
 
-    /// The job was cancelled.
-    Cancelled,
+    /// The job was canceled.
+    Canceled,
 
     /// The job produced an error.
     Failed {

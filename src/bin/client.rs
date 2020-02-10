@@ -684,13 +684,13 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 jid,
                 mut cmd,
                 class,
-                status: Status::Cancelled,
+                status: Status::Canceled,
                 variables: _variables,
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Fri->"Cancelled", class, cmd, "", ""]);
+                table.add_row(row![b->jid, Fri->"Canceled", class, cmd, "", ""]);
             }
 
             JobInfo {
@@ -852,7 +852,7 @@ fn make_matrix_csv_inner(
             job.cmd,
             job.jid.to_string(),
             match job.status {
-                Status::Cancelled => "Cancelled".to_owned(),
+                Status::Canceled => "Canceled".to_owned(),
                 Status::Waiting => "Waiting".to_owned(),
                 Status::Running { .. } => "Running".to_owned(),
                 Status::Failed { .. } => "Failed".to_owned(),

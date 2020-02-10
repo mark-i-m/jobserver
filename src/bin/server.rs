@@ -1,10 +1,11 @@
 //! Server implmentation
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::process::Stdio;
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command, Stdio};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
@@ -12,8 +13,6 @@ use std::sync::{
 use std::time::Duration;
 
 use clap::clap_app;
-
-use crossbeam::channel::{select, unbounded, Receiver, TryRecvError};
 
 use jobserver::{
     cmd_replace_machine, cmd_replace_vars, cmd_to_path, JobServerReq, JobServerResp, Status,
@@ -27,23 +26,18 @@ use log::{debug, error, info, warn};
 struct Server {
     // Lock ordering:
     // - machines
-    // - jobs
-    // - setup_tasks
+    // - tasks
     /// Maps available machines to their classes.
     machines: Arc<Mutex<HashMap<String, MachineStatus>>>,
 
     /// Any variables set by the client. Used for replacement in command strings.
     variables: Arc<Mutex<HashMap<String, String>>>,
 
-    /// Information about jobs, by job ID.
-    jobs: Arc<Mutex<HashMap<usize, Job>>>,
+    /// Information about queued tasks, by job ID.
+    tasks: Arc<Mutex<HashMap<usize, Task>>>,
 
     /// Information about matrices, by ID.
     matrices: Arc<Mutex<HashMap<usize, Matrix>>>,
-
-    /// Setup tasks. They are assigned a job ID, but are kind of weird because they can have
-    /// multiple commands and are assigned a machine at creation time.
-    setup_tasks: Arc<Mutex<HashMap<usize, SetupTask>>>,
 
     /// The next job ID to be assigned.
     next_jid: AtomicUsize,
@@ -52,51 +46,76 @@ struct Server {
     runner: String,
 }
 
-/// Information about a single job.
 #[derive(Clone, Debug)]
-struct Job {
-    /// The job's ID.
+enum TaskType {
+    Job,
+    SetupTask,
+}
+
+/// A state machine for tasks, defining deterministically what they should do next.
+#[derive(Clone, Debug)]
+enum TaskState {
+    /// This task has not yet started running.
+    Waiting,
+
+    /// This task is running the `n`th command in the `cmds` vector.
+    Running(usize),
+
+    /// The task terminated with a successful error code, but we have not yet checked for results.
+    CheckingResults,
+
+    /// The task completed and we are copying results.
+    CopyingResults { results_path: String },
+
+    /// Everything is done, and we are about to move to a Done state.
+    Finalize { results_path: Option<String> },
+
+    /// This task has completed.
+    Done,
+
+    /// This task has completed and results were produced.
+    DoneWithResults {
+        /// The filename (prefix) of results from the task.
+        results_path: String,
+    },
+
+    /// This task terminated with an error.
+    Error { error: String },
+
+    /// This task was canceled and has yet to be garbage collected.
+    Canceled,
+}
+
+/// Information about a single task (a job or setup task). This is a big state machine that says
+/// what the status of the task is and has all information to do the next thing when ready.
+#[derive(Clone, Debug)]
+struct Task {
+    /// The tasks's ID.
     jid: usize,
 
-    /// The command (without replacements).
-    cmd: String,
+    /// The type of the task (a job or setup task).
+    ty: TaskType,
 
-    /// The class of the machines that can run this job.
-    class: String,
+    /// The machine we are running the task on, if any.
+    machine: Option<String>,
+
+    /// The class of the machines that can run this task, if any.
+    class: Option<String>,
 
     /// The location to copy results, if any.
     cp_results: Option<String>,
 
-    /// The current status of the job.
-    status: Status,
-
     /// The mapping of variables at the time the job was created.
     variables: HashMap<String, String>,
-}
-
-/// Information about a single setup task.
-#[derive(Clone, Debug)]
-struct SetupTask {
-    /// The job's ID.
-    jid: usize,
-
-    /// The machine we are setting up.
-    machine: String,
 
     /// The commands (without replacements).
     cmds: Vec<String>,
 
-    /// The current command to be run.
-    current_cmd: usize,
+    /// Set to `true` if the task is canceled; `false` otherwise.
+    canceled: bool,
 
-    /// The class of the machines that can run this job.
-    class: Option<String>,
-
-    /// The current status of the job.
-    status: Status,
-
-    /// The mapping of variables at the time the job was created.
-    variables: HashMap<String, String>,
+    /// The state of the task that we are currently in. This defines a state machine for the task.
+    state: TaskState,
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
@@ -131,14 +150,55 @@ struct MachineStatus {
     running: Option<usize>,
 }
 
+/// Information about a job run by the server.
+#[derive(Debug)]
+struct JobProcessInfo {
+    child: Command,
+
+    /// The child process running the actual job.
+    handle: Child,
+
+    /// The filename of the stdout file.
+    stdout: String,
+
+    /// The filename of the stderr file.
+    stderr: String,
+}
+
+impl Task {
+    pub fn status(&self) -> Status {
+        match &self.state {
+            TaskState::Waiting => Status::Waiting,
+            TaskState::Running(..)
+            | TaskState::CheckingResults { .. }
+            | TaskState::CopyingResults { .. }
+            | TaskState::Finalize { .. } => Status::Running {
+                machine: self.machine.as_ref().unwrap().clone(),
+            },
+            TaskState::Done => Status::Done {
+                machine: self.machine.as_ref().unwrap().clone(),
+                output: None,
+            },
+            TaskState::DoneWithResults { results_path } => Status::Done {
+                machine: self.machine.as_ref().unwrap().clone(),
+                output: Some(results_path.clone()),
+            },
+            TaskState::Error { error } => Status::Failed {
+                machine: Some(self.machine.as_ref().unwrap().clone()),
+                error: error.clone(),
+            },
+            TaskState::Canceled => Status::Canceled,
+        }
+    }
+}
+
 impl Server {
     /// Creates a new server. Not listening yet.
     pub fn new(runner: String) -> Self {
         Self {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
-            jobs: Arc::new(Mutex::new(HashMap::new())),
-            setup_tasks: Arc::new(Mutex::new(HashMap::new())),
+            tasks: Arc::new(Mutex::new(HashMap::new())),
             matrices: Arc::new(Mutex::new(HashMap::new())),
             next_jid: AtomicUsize::new(0),
             runner,
@@ -271,16 +331,18 @@ impl Server {
 
                 let variables = self.variables.lock().unwrap().clone();
 
-                self.setup_tasks.lock().unwrap().insert(
+                self.tasks.lock().unwrap().insert(
                     jid,
-                    SetupTask {
+                    Task {
                         jid,
+                        ty: TaskType::SetupTask,
                         cmds,
                         class,
-                        current_cmd: 0,
-                        machine: addr,
-                        status: Status::Waiting,
+                        machine: Some(addr),
+                        state: TaskState::Waiting,
                         variables,
+                        cp_results: None,
+                        canceled: false,
                     },
                 );
 
@@ -318,15 +380,18 @@ impl Server {
 
                 let variables = self.variables.lock().unwrap().clone();
 
-                self.jobs.lock().unwrap().insert(
+                self.tasks.lock().unwrap().insert(
                     jid,
-                    Job {
+                    Task {
                         jid,
-                        cmd,
-                        class,
+                        ty: TaskType::Job,
+                        cmds: vec![cmd],
+                        class: Some(class),
                         cp_results,
-                        status: Status::Waiting,
+                        state: TaskState::Waiting,
                         variables,
+                        machine: None,
+                        canceled: false,
                     },
                 );
 
@@ -334,71 +399,165 @@ impl Server {
             }
 
             ListJobs => {
-                let mut jobs: Vec<_> = self.jobs.lock().unwrap().keys().map(|&k| k).collect();
-                jobs.extend(self.setup_tasks.lock().unwrap().keys());
-
-                JobServerResp::Jobs(jobs)
-
+                let tasks: Vec<_> = self.tasks.lock().unwrap().keys().map(|&k| k).collect();
+                JobServerResp::Jobs(tasks)
                 // drop locks
             }
 
             CancelJob { jid } => self.cancel_job(jid),
 
             JobStatus { jid } => {
-                if let Some(job) = self.jobs.lock().unwrap().get(&jid) {
-                    info!("Stating job {}, {:?}", jid, job);
-
-                    JobServerResp::JobStatus {
+                let locked_tasks = self.tasks.lock().unwrap();
+                let task = locked_tasks.get(&jid);
+                match task {
+                    Some(Task {
                         jid,
-                        class: job.class.clone(),
-                        cmd: job.cmd.clone(),
-                        status: job.status.clone(),
-                        variables: job.variables.clone(),
-                    }
-                } else if let Some(setup_task) = self.setup_tasks.lock().unwrap().get(&jid) {
-                    info!("Stating setup task {}, {:?}", jid, setup_task);
+                        ty: TaskType::Job,
+                        class,
+                        cmds,
+                        variables,
+                        ..
+                    }) => {
+                        info!("Stating job {}, {:?}", jid, task);
 
-                    JobServerResp::JobStatus {
-                        jid,
-                        class: setup_task
-                            .class
-                            .as_ref()
-                            .map(Clone::clone)
-                            .unwrap_or("".into()),
-                        cmd: setup_task.cmds[setup_task.current_cmd].clone(),
-                        status: setup_task.status.clone(),
-                        variables: setup_task.variables.clone(),
+                        JobServerResp::JobStatus {
+                            jid: *jid,
+                            class: class.as_ref().expect("No class for clone").clone(),
+                            cmd: cmds.first().unwrap().clone(),
+                            status: task.unwrap().status(),
+                            variables: variables.clone(),
+                        }
                     }
-                } else {
-                    error!("No such job: {}", jid);
-                    JobServerResp::NoSuchJob
+
+                    Some(Task {
+                        jid,
+                        ty: TaskType::SetupTask,
+                        class,
+                        cmds,
+                        state,
+                        variables,
+                        ..
+                    }) => {
+                        info!("Stating setup task {}, {:?}", jid, task);
+
+                        let cmd = match state {
+                            TaskState::Waiting => &cmds[0],
+                            TaskState::Running(idx) => &cmds[*idx],
+                            TaskState::Done
+                            | TaskState::DoneWithResults { .. }
+                            | TaskState::Error { .. }
+                            | TaskState::CheckingResults
+                            | TaskState::CopyingResults { .. }
+                            | TaskState::Finalize { .. }
+                            | TaskState::Canceled => cmds.last().unwrap(),
+                        }
+                        .clone();
+
+                        JobServerResp::JobStatus {
+                            jid: *jid,
+                            class: class.as_ref().map(Clone::clone).unwrap_or("".into()),
+                            cmd,
+                            status: task.unwrap().status(),
+                            variables: variables.clone(),
+                        }
+                    }
+
+                    None => {
+                        error!("No such job: {}", jid);
+                        JobServerResp::NoSuchJob
+                    }
                 }
             }
 
             CloneJob { jid } => {
-                let mut locked_jobs = self.jobs.lock().unwrap();
+                let mut locked_jobs = self.tasks.lock().unwrap();
+                let task = locked_jobs.get(&jid);
 
-                if let Some(job) = locked_jobs.get(&jid).map(Clone::clone) {
-                    let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+                match task {
+                    Some(Task {
+                        jid,
+                        ty: TaskType::Job,
+                        cmds,
+                        class,
+                        variables,
+                        cp_results,
+                        ..
+                    }) => {
+                        let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
-                    info!("Cloning job {} to job {}, {:?}", jid, new_jid, job);
+                        info!(
+                            "Cloning job {} to job {}, {:?}",
+                            jid,
+                            new_jid,
+                            task.unwrap()
+                        );
 
-                    locked_jobs.insert(
-                        new_jid,
-                        Job {
-                            jid: new_jid,
-                            cmd: job.cmd.clone(),
-                            class: job.class.clone(),
-                            cp_results: job.cp_results.clone(),
-                            status: Status::Waiting,
-                            variables: job.variables.clone(),
-                        },
-                    );
+                        let cmds = cmds.clone();
+                        let class = class.clone();
+                        let cp_results = cp_results.clone();
+                        let variables = variables.clone();
 
-                    JobServerResp::JobId(new_jid)
-                } else {
-                    error!("No such job: {}", jid);
-                    JobServerResp::NoSuchJob
+                        locked_jobs.insert(
+                            new_jid,
+                            Task {
+                                jid: new_jid,
+                                ty: TaskType::Job,
+                                cmds,
+                                class,
+                                cp_results,
+                                variables,
+                                state: TaskState::Waiting,
+                                machine: None,
+                                canceled: false,
+                            },
+                        );
+
+                        JobServerResp::JobId(new_jid)
+                    }
+
+                    Some(Task {
+                        jid,
+                        ty: TaskType::SetupTask,
+                        cmds,
+                        class,
+                        machine,
+                        variables,
+                        ..
+                    }) => {
+                        let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+
+                        info!(
+                            "Cloning setup task {} to setup task {}, {:?}",
+                            jid, new_jid, task
+                        );
+
+                        let cmds = cmds.clone();
+                        let class = class.clone();
+                        let machine = machine.clone();
+                        let variables = variables.clone();
+
+                        locked_jobs.insert(
+                            new_jid,
+                            Task {
+                                jid: new_jid,
+                                ty: TaskType::SetupTask,
+                                cmds,
+                                class,
+                                machine,
+                                cp_results: None,
+                                state: TaskState::Waiting,
+                                variables,
+                                canceled: false,
+                            },
+                        );
+
+                        JobServerResp::JobId(new_jid)
+                    }
+
+                    None => {
+                        error!("No such job or setup task: {}", jid);
+                        JobServerResp::NoSuchJob
+                    }
                 }
             }
 
@@ -439,15 +598,18 @@ impl Server {
                         id, jid, class, cmd
                     );
 
-                    self.jobs.lock().unwrap().insert(
+                    self.tasks.lock().unwrap().insert(
                         jid,
-                        Job {
+                        Task {
                             jid,
-                            cmd,
-                            class: class.clone(),
+                            ty: TaskType::Job,
+                            cmds: vec![cmd],
+                            class: Some(class.clone()),
                             cp_results: cp_results.clone(),
-                            status: Status::Waiting,
+                            state: TaskState::Waiting,
                             variables: config,
+                            machine: None,
+                            canceled: false,
                         },
                     );
                 }
@@ -491,645 +653,514 @@ impl Server {
 }
 
 impl Server {
-    /// Start the thread that actually gets stuff done...
-    pub fn start_work_thread(self: Arc<Self>) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || Self::work_thread(self))
-    }
-
-    /// Does the actual work...
-    fn work_thread(self: Arc<Self>) {
-        // A mapping of running jobs to their thread handles.
-        let mut running_job_handles = HashMap::new();
-
-        // Loop over all jobs and setup tasks to see if they can be scheduled on any of the
-        // available machines.
-        //
-        // We don't really try to be efficient here because the amount of time to run the jobs will
-        // dwarf the amount of time to run this loop...
-        loop {
-            {
-                let mut locked_machines = self.machines.lock().unwrap();
-                let mut locked_jobs = self.jobs.lock().unwrap();
-
-                // Compute a list of idle machines.
-                let mut idle_machines: Vec<_> = locked_machines
-                    .iter_mut()
-                    .filter(|m| m.1.running.is_none())
-                    .collect();
-
-                // Find a waiting job that can run on one of the available machines.
-                let waiting_job = locked_jobs.iter_mut().find(|j| {
-                    if let Status::Waiting = j.1.status {
-                        idle_machines.iter().any(|m| m.1.class == j.1.class)
-                    } else {
-                        false
-                    }
-                });
-
-                // If there is a task to run, run it.
-                if let Some(can_run) = waiting_job {
-                    // Get a machine for it to run on. Safe because we already checked that a
-                    // machine is available, and we are holding the lock.
-                    let machine = idle_machines
-                        .iter_mut()
-                        .find(|m| m.1.class == can_run.1.class)
-                        .unwrap();
-
-                    // Mark the machine and job as running.
-                    machine.1.running = Some(*can_run.0);
-                    can_run.1.status = Status::Running {
-                        machine: machine.0.clone(),
-                    };
-
-                    let this = Arc::clone(&self);
-                    let jid = *can_run.0;
-                    let (sender, receiver) = unbounded();
-                    let handle = std::thread::spawn(move || {
-                        this.job_thread(jid, receiver);
-                    });
-
-                    info!("Running job {} on machine {}", can_run.0, machine.0);
-
-                    running_job_handles.insert(*can_run.0, (handle, sender));
-                } else {
-                    debug!("No jobs can run.");
-                }
-
-                // drop locks
-            }
-
-            // Also, start any waiting setup tasks.
-            {
-                let mut locked_setup_tasks = self.setup_tasks.lock().unwrap();
-
-                for (&jid, setup_task) in locked_setup_tasks.iter_mut() {
-                    if let Status::Waiting = setup_task.status {
-                        // Mark the task as running.
-                        setup_task.status = Status::Running {
-                            machine: setup_task.machine.clone(),
-                        };
-
-                        let this = Arc::clone(&self);
-                        let (sender, receiver) = unbounded();
-                        let handle = std::thread::spawn(move || {
-                            this.setup_task_thread(jid, receiver);
-                        });
-
-                        info!(
-                            "Running setup task {} on machine {}",
-                            jid, setup_task.machine
-                        );
-
-                        running_job_handles.insert(jid, (handle, sender));
-                    }
-                }
-
-                // drop locks
-            }
-
-            // Finally, check for any cancelled task to signal and remove. We are not really
-            // in a hurry, so we can be a bit lazy about this for simplicity.
-            {
-                let mut locked_jobs = self.jobs.lock().unwrap();
-
-                let to_cancel = locked_jobs.iter().find_map(|(&jid, j)| {
-                    if let Status::Cancelled = j.status {
-                        Some(jid)
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(to_cancel) = to_cancel {
-                    let cancelled = locked_jobs.remove(&to_cancel).unwrap(); // safe because we just checked.
-                    if let Some((_, cancel_chan)) = running_job_handles.remove(&cancelled.jid) {
-                        let _ = cancel_chan.send(());
-                    }
-                }
-
-                // drop locks
-            }
-
-            {
-                let mut locked_setup_tasks = self.setup_tasks.lock().unwrap();
-
-                let to_cancel = locked_setup_tasks.iter().find_map(|(&jid, j)| {
-                    if let Status::Cancelled = j.status {
-                        Some(jid)
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(to_cancel) = to_cancel {
-                    let cancelled = locked_setup_tasks.remove(&to_cancel).unwrap(); // safe because we just checked.
-                    if let Some((_, cancel_chan)) = running_job_handles.remove(&cancelled.jid) {
-                        let _ = cancel_chan.send(());
-                    }
-                }
-
-                // drop locks
-            }
-
-            // Sleep a bit.
-            std::thread::sleep(Duration::from_secs(1));
-        }
-    }
-
-    /// Mark the given job as cancelled.
+    /// Mark the given job as canceled. This doesn't actually do anything yet. The job will be
+    /// killed and removed asynchronously.
     fn cancel_job(&self, jid: usize) -> JobServerResp {
-        // We set the status to cancelled and let the job server handle the rest.
+        // We set the `canceled` flag and let the job server handle the rest.
 
-        if let Some(job) = self.jobs.lock().unwrap().get_mut(&jid) {
-            info!("Cancelling job {}, {:?}", jid, job);
-
-            job.status = Status::Cancelled;
-
-            JobServerResp::Ok
-        } else if let Some(setup_task) = self.setup_tasks.lock().unwrap().get_mut(&jid) {
-            info!("Stating setup task {}, {:?}", jid, setup_task);
-
-            setup_task.status = Status::Cancelled;
-
+        if let Some(job) = self.tasks.lock().unwrap().get_mut(&jid) {
+            info!("Cancelling task {}, {:?}", jid, job);
+            job.canceled = true;
             JobServerResp::Ok
         } else {
             error!("No such job: {}", jid);
             JobServerResp::NoSuchJob
         }
     }
+}
 
-    /// A thread to run the given job.
-    fn job_thread(self: Arc<Self>, jid: usize, cancel_chan: Receiver<()>) {
-        // Find the command and machine to use. We do a lot of checking whether the job is
-        // cancelled.
-        let (cmd, machine, cp_results, variables) = {
-            let locked_jobs = self.jobs.lock().unwrap();
-            if let Some(job) = locked_jobs.get(&jid) {
-                (
-                    job.cmd.clone(),
-                    if let Status::Running { ref machine } = job.status {
-                        machine.clone()
-                    } else {
-                        error!(
-                            "Unable to find machine assignment for job {}: {:?}",
-                            jid, job
-                        );
-                        return;
-                    },
-                    job.cp_results.clone(),
-                    job.variables.clone(),
-                )
-            } else {
-                match cancel_chan.try_recv() {
-                    Err(TryRecvError::Disconnected) | Ok(()) => {
-                        warn!("Job {} was cancelled before running.", jid);
-                    }
-                    Err(TryRecvError::Empty) => {
-                        error!("Job {} was not found.", jid);
-                    }
-                }
-
-                return;
-            }
-
-            // drop locks
-        };
-
-        match cancel_chan.try_recv() {
-            Err(TryRecvError::Disconnected) | Ok(()) => {
-                warn!(
-                    "Job {} was cancelled before running. Cmd {}, Machine {}",
-                    jid, cmd, machine
-                );
-                return;
-            }
-            _ => {}
-        }
-
-        // Actually run the command now.
-        let result = Self::run_cmd(jid, &machine, &cmd, cancel_chan, &variables, &self.runner);
-
-        // Check the results.
-        match result {
-            Ok(Some(results_path)) => {
-                info!("Job {} completed with results path: {}", jid, results_path);
-
-                // Update status
-                {
-                    let mut locked_jobs = self.jobs.lock().unwrap();
-                    if let Some(job) = locked_jobs.get_mut(&jid) {
-                        job.status = Status::Done {
-                            machine: machine.clone(),
-                            output: Some(results_path.clone()),
-                        };
-                    } else {
-                        // doesn't matter, since we're done anyway
-                    }
-
-                    // drop locks
-                }
-
-                if let Some(cp_results) = cp_results {
-                    // Copy via SCP
-                    info!("Copying results (job {}) to {}", jid, cp_results);
-
-                    // HACK: assume all machine names are in the form HOSTNAME:PORT, and all
-                    // results are output to `vm_shared/results/` on the remote.
-                    let machine_ip = machine.split(":").next().unwrap();
-
-                    let scp_result = std::process::Command::new("scp")
-                        .arg(&format!(
-                            "{}:vm_shared/results/{}",
-                            machine_ip, results_path
-                        ))
-                        .arg(cp_results)
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .output();
-
-                    match scp_result {
-                        Ok(..) => info!("Finished copying results for job {}.", jid),
-                        Err(e) => error!("Error copy results for job {}: {}", jid, e),
-                    }
-                } else {
-                    warn!("Discarding results even though they were produced");
-                }
-            }
-
-            Ok(None) => {
-                // Update status
-                {
-                    let mut locked_jobs = self.jobs.lock().unwrap();
-                    if let Some(job) = locked_jobs.get_mut(&jid) {
-                        job.status = Status::Done {
-                            machine: machine.clone(),
-                            output: None,
-                        };
-                    } else {
-                        // doesn't matter, since we're done anyway
-                    }
-
-                    // drop locks
-                }
-
-                if let Some(cp_results) = cp_results {
-                    warn!(
-                        "Job {} completed with no results, but a path was given to \
-                         copy results to: {}",
-                        jid, cp_results
-                    );
-                } else {
-                    info!("Job {} completed with no results", jid);
-                }
-            }
-
-            Err(e) => {
-                error!(
-                    "Job {}, cmd {}, machine{} terminated with error {}",
-                    jid, cmd, machine, e
-                );
-
-                // Update status
-                {
-                    let mut locked_jobs = self.jobs.lock().unwrap();
-                    if let Some(job) = locked_jobs.get_mut(&jid) {
-                        job.status = Status::Failed {
-                            machine: Some(machine.clone()),
-                            error: format!("{}", e),
-                        };
-                    } else {
-                        // doesn't matter, since we're done anyway
-                    }
-
-                    // drop locks
-                }
-            }
-        }
-
-        // Mark machine as available again
-        {
-            let mut locked_machines = self.machines.lock().unwrap();
-            let locked_machine = locked_machines.get_mut(&machine);
-
-            if let Some(locked_machine) = locked_machine {
-                info!("Releasing machine {:?}", locked_machine);
-                locked_machine.running = None;
-            } else {
-                // Not sure why this would happen, but clearly it doesn't matter...
-                error!("Unable to release machine {}", machine);
-            }
-        }
+impl Server {
+    /// Start the thread that actually gets stuff done...
+    pub fn start_work_thread(self: Arc<Self>) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || Self::work_thread(self))
     }
 
-    /// A thread that runs a setup task.
-    fn setup_task_thread(self: Arc<Self>, jid: usize, cancel_chan: Receiver<()>) {
-        // Get the task.
-        let setup_task = if let Some(setup_task) = self.setup_tasks.lock().unwrap().get(&jid) {
-            // We make a local copy so we don't need to hold the lock.
-            setup_task.clone()
-        } else {
-            match cancel_chan.try_recv() {
-                Err(TryRecvError::Disconnected) | Ok(()) => {
-                    warn!("Setup task {} was cancelled before running.", jid);
-                }
-                Err(TryRecvError::Empty) => {
-                    error!("Setup task {} was not found.", jid);
-                }
-            }
+    /// Does the actual work... attempts to drive each state machine forward if it can be. Then,
+    /// sleeps a bit.
+    fn work_thread(self: Arc<Self>) {
+        let mut running_job_handles = HashMap::new();
+        let mut to_remove = HashSet::new();
+        let copying_flags = Arc::new(Mutex::new(HashSet::new()));
 
-            return;
-        };
+        loop {
+            info!("Work thread iteration.");
 
-        // Check for cancellation.
-        match cancel_chan.try_recv() {
-            Err(TryRecvError::Disconnected) | Ok(()) => {
-                warn!(
-                    "Setup task {} was cancelled before running. {:?}",
-                    jid, setup_task
-                );
-                return;
-            }
-            _ => {}
-        }
+            // We keep track of whether any task had a state change. If there was, then there is
+            // increased chance of another state change soon, so iterate with higher frequency.
+            let mut updated = false;
 
-        let variables = self.variables.lock().unwrap().clone();
-
-        // Execute all cmds
-        for (i, cmd) in setup_task.cmds.iter().enumerate() {
-            // Check for cancellation.
-            match cancel_chan.try_recv() {
-                Err(TryRecvError::Disconnected) | Ok(()) => {
-                    warn!(
-                        "Setup task {} was cancelled while running. {:?}",
-                        jid, setup_task
-                    );
-                    return;
-                }
-                _ => {}
-            }
-
-            // Update the progress...
             {
-                let mut locked_tasks = self.setup_tasks.lock().unwrap();
-                let task = locked_tasks.get_mut(&jid);
+                let mut locked_machines = self.machines.lock().unwrap();
+                let mut locked_tasks = self.tasks.lock().unwrap();
 
-                if let Some(task) = task {
-                    task.current_cmd = i;
-                } else {
-                    match cancel_chan.try_recv() {
-                        Err(TryRecvError::Disconnected) | Ok(()) => {
-                            warn!("Setup task {} was cancelled while running.", jid);
-                        }
-                        Err(TryRecvError::Empty) => {
-                            error!("Setup task {} was not found.", jid);
-                        }
-                    }
+                for (jid, task) in locked_tasks.iter_mut() {
+                    updated = updated
+                        || Self::try_drive_sm(
+                            &self.runner,
+                            *jid,
+                            task,
+                            &mut *locked_machines,
+                            &mut running_job_handles,
+                            &mut to_remove,
+                            copying_flags.clone(),
+                        );
+                }
 
-                    return;
+                // Remove any canceled processes from the task list.
+                for jid in to_remove.drain() {
+                    let _ = locked_tasks.remove(&jid);
                 }
 
                 // drop locks
             }
 
-            let result = Self::run_cmd(
+            // Sleep a bit.
+            std::thread::sleep(if updated {
+                Duration::from_millis(100)
+            } else {
+                Duration::from_secs(5)
+            });
+        }
+    }
+
+    /// Attempts to drive the given task's state machine forward one step.
+    fn try_drive_sm(
+        runner: &str,
+        jid: usize,
+        task: &mut Task,
+        machines: &mut HashMap<String, MachineStatus>,
+        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        to_remove: &mut HashSet<usize>,
+        copying_flags: Arc<Mutex<HashSet<usize>>>,
+    ) -> bool {
+        // If the task was canceled since the last time it was driven, set the state to `Canceled`
+        // so it can get garbage collected.
+        if task.canceled {
+            task.state = TaskState::Canceled;
+        }
+
+        match task.state {
+            TaskState::Waiting => {
+                Self::try_drive_sm_waiting(runner, jid, task, machines, running_job_handles)
+            }
+
+            TaskState::Running(idx) => {
+                Self::try_drive_sm_running(runner, jid, task, machines, running_job_handles, idx)
+            }
+
+            TaskState::CheckingResults => Self::try_drive_sm_checking_results(
                 jid,
-                &setup_task.machine,
-                cmd,
-                cancel_chan.clone(),
-                &variables,
-                &self.runner,
-            );
+                task,
+                machines,
+                running_job_handles,
+                copying_flags,
+            ),
 
-            match result {
-                Ok(Some(results_path)) => {
-                    warn!(
-                        "Setup task {} produced results at {} {}",
-                        jid, setup_task.machine, results_path
-                    );
-                }
-
-                Ok(None) => {
-                    info!("Setup task {} completed", jid);
-                }
-
-                Err(e) => {
-                    error!(
-                        "Setup task {} cmd {} terminated with error {}. Aborting setup task {:?}",
-                        jid, cmd, e, setup_task
-                    );
-
-                    // Update status
-                    {
-                        let mut locked_setup_tasks = self.setup_tasks.lock().unwrap();
-                        if let Some(job) = locked_setup_tasks.get_mut(&jid) {
-                            job.status = Status::Failed {
-                                machine: Some(setup_task.machine.clone()),
-                                error: format!("{}", e),
-                            };
-                        } else {
-                            // doesn't matter, since we're done anyway
-                        }
-
-                        // drop locks
-                    }
-
-                    return;
+            TaskState::CopyingResults { ref results_path } => {
+                // The copy thread will insert a `()` just before it exits, indicating it's done.
+                if copying_flags.lock().unwrap().remove(&jid) {
+                    task.state = TaskState::Finalize {
+                        results_path: Some(results_path.clone()),
+                    };
+                    true
+                } else {
+                    false
                 }
             }
-        }
 
-        // Set the status of the task to done!
-        {
-            let mut locked_tasks = self.setup_tasks.lock().unwrap();
-            let task = locked_tasks.get_mut(&jid);
+            TaskState::Finalize { ref results_path } => {
+                let results_path = results_path.clone();
 
-            if let Some(task) = task {
-                task.status = Status::Done {
-                    machine: task.machine.clone(),
-                    output: None,
-                };
-            } else {
-                match cancel_chan.try_recv() {
-                    Err(TryRecvError::Disconnected) | Ok(()) => {
-                        warn!("Setup task {} was cancelled while running.", jid);
-                    }
-                    Err(TryRecvError::Empty) => {
-                        error!("Setup task {} was not found.", jid);
-                    }
-                }
+                Self::try_drive_sm_finalize(jid, task, machines, running_job_handles, results_path)
+            }
+            TaskState::Done | TaskState::DoneWithResults { .. } => {
+                let old = running_job_handles.remove(&jid);
 
-                return;
+                // Update occured if we actually removed something.
+                old.is_some()
             }
 
-            // drop locks
+            TaskState::Error { .. } => {
+                // Free any associated machine.
+                let machine = task.machine.as_ref().unwrap();
+                if let Some(machine) = machines.get_mut(machine) {
+                    machine.running = None;
+                }
+
+                // Clean up job handles
+                let _ = running_job_handles.remove(&jid);
+
+                true
+            }
+
+            TaskState::Canceled => {
+                Self::try_drive_sm_canceled(jid, task, machines, running_job_handles, to_remove)
+            }
         }
+    }
 
-        // If the class is set, make the machine available
-        if let Some(class) = setup_task.class {
-            info!(
-                "Adding machine {} to class {} after setup task {} completed.",
-                setup_task.machine, class, jid
-            );
+    /// The task has not started yet. Attempt to do so now.
+    fn try_drive_sm_waiting(
+        runner: &str,
+        jid: usize,
+        task: &mut Task,
+        machines: &mut HashMap<String, MachineStatus>,
+        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+    ) -> bool {
+        let machine = if let TaskType::SetupTask = task.ty {
+            Some(task.machine.as_ref().unwrap().clone())
+        } else {
+            machines
+                .iter_mut()
+                .filter(|m| m.1.running.is_none())
+                .filter(|m| m.1.class.as_str() == task.class.as_ref().unwrap())
+                .map(|(m, _)| m.clone())
+                .next()
+        };
 
-            let mut locked = self.machines.lock().unwrap();
+        // If we found a machine, start the task.
+        if let Some(machine) = machine {
+            // Mark the machine as running the task if it exists (it may not exist if this
+            // is a setup task because the machine is not setup yet).
+            if let Some(machine) = machines.get_mut(&machine) {
+                machine.running = Some(jid);
+            }
 
-            // Check if the machine is already there, since it may be running a job.
-            let old = locked.get(&setup_task.machine);
+            // Mark the task as running.
+            task.state = TaskState::Running(0);
+            task.machine = Some(machine.clone());
 
-            let running_job = if let Some(old_class) = old {
-                error!(
-                    "After setup task {}: Removing {} from old class {}. New class is {}",
-                    jid, setup_task.machine, old_class.class, class
-                );
+            match Self::run_cmd(jid, task, &machine, runner) {
+                Ok(job) => {
+                    info!("Running job {} on machine {}", jid, machine);
 
-                old_class.running
-            } else {
-                None
+                    running_job_handles.insert(jid, job);
+                }
+                Err(err) => {
+                    error!("Unable to start job {}: {}", jid, err);
+
+                    task.state = TaskState::Error {
+                        error: format!("Unable to start job {}: {}", jid, err),
+                    };
+                }
             };
 
-            info!(
-                "Add machine {}/{} with running job: {:?}",
-                setup_task.machine, class, running_job
-            );
+            true
+        } else {
+            debug!("No machine found for task {}.", jid);
 
-            // Add machine
-            locked.insert(
-                setup_task.machine.clone(),
-                MachineStatus {
-                    class,
-                    running: running_job,
-                },
-            );
-
-            // drop locks
+            false
         }
+    }
+
+    /// The task is currently running. Check if it has terminated. If it has terminated, the
+    /// we attempt to start the next command, if any, or move to copy results, if any.
+    fn try_drive_sm_running(
+        runner: &str,
+        jid: usize,
+        task: &mut Task,
+        _machines: &mut HashMap<String, MachineStatus>,
+        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        idx: usize,
+    ) -> bool {
+        let job_proc_info = running_job_handles
+            .get_mut(&jid)
+            .expect("No job process info for running command.");
+
+        let machine = task.machine.as_ref().unwrap();
+
+        match job_proc_info.handle.try_wait() {
+            // Job terminated.
+            Ok(Some(status)) => {
+                info!("Task {} terminated with status code {}.", jid, status);
+
+                // If status code indicates sucess, then proceed. Otherwise, fail the task.
+                if status.success() {
+                    // If this is the last command of the task, then we are done.
+                    // Otherwise, start the next command.
+                    if idx == task.cmds.len() - 1 {
+                        info!("Task {} is complete. Need to check for results.", jid);
+                        task.state = TaskState::CheckingResults;
+                    } else {
+                        info!("Starting cmd {} of task {}.", idx + 1, jid);
+
+                        task.state = TaskState::Running(idx + 1);
+
+                        // Actually start the command now.
+                        match Self::run_cmd(jid, task, machine, runner) {
+                            Ok(job) => {
+                                info!("Running job {} on machine {}", jid, machine);
+                                running_job_handles.insert(jid, job);
+                            }
+                            Err(err) => {
+                                error!("Unable to start job {}: {}", jid, err);
+
+                                task.state = TaskState::Error {
+                                    error: format!("Unable to start job {}: {}", jid, err),
+                                };
+                            }
+                        };
+                    }
+                } else {
+                    task.state = TaskState::Error {
+                        error: format!("Task returned failing exit code: {}", status),
+                    };
+                }
+
+                true
+            }
+
+            // Not ready yet... do nothing.
+            Ok(None) => false,
+
+            // There was an error waiting for the child... not clear what to do here... for
+            // now, we just do nothing and hope it works next time.
+            Err(err) => {
+                error!("Unable to wait for process exit for job {}: {}", jid, err);
+                false
+            }
+        }
+    }
+
+    /// Need to copy results for a task that completed, if any.
+    fn try_drive_sm_checking_results(
+        jid: usize,
+        task: &mut Task,
+        _machines: &mut HashMap<String, MachineStatus>,
+        _running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        copying_flags: Arc<Mutex<HashSet<usize>>>,
+    ) -> bool {
+        // Look through the stdout for the "RESULTS: " line to get the results path.
+        let results_path = {
+            let cmd = task.cmds.last().unwrap();
+            let stdout_file_name = format!("{}", cmd_to_path(jid, &cmd));
+            let file = std::fs::File::open(stdout_file_name).expect("Unable to open stdout file");
+            BufReader::new(file)
+                .lines()
+                .filter_map(|line| line.ok())
+                .find_map(|line| {
+                    // Check if there was a results path printed.
+                    if line.starts_with("RESULTS: ") {
+                        Some(line[9..].to_string())
+                    } else {
+                        None
+                    }
+                })
+        };
+
+        // If there is such a path, then spawn a thread to copy the file to this machine
+        match (&task.cp_results, &results_path) {
+            (Some(cp_results), Some(results_path)) => {
+                {
+                    let machine = task.machine.as_ref().unwrap().clone();
+                    let cp_results = cp_results.clone();
+                    let results_path = results_path.clone();
+
+                    std::thread::spawn(move || {
+                        // Copy via SCP
+                        info!("Copying results (job {}) to {}", jid, cp_results);
+
+                        // HACK: assume all machine names are in the form HOSTNAME:PORT, and all
+                        // results are output to `vm_shared/results/` on the remote.
+                        let machine_ip = machine.split(":").next().unwrap();
+
+                        let scp_result = std::process::Command::new("scp")
+                            .arg(&format!(
+                                "{}:vm_shared/results/{}", // TODO: make this generic
+                                machine_ip, results_path
+                            ))
+                            .arg(cp_results)
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .output();
+
+                        match scp_result {
+                            Ok(..) => info!("Finished copying results for job {}.", jid),
+                            Err(e) => error!("Error copy results for job {}: {}", jid, e),
+                        }
+
+                        // Indicate we are done.
+                        copying_flags.lock().unwrap().insert(jid);
+                    });
+                }
+
+                task.state = TaskState::CopyingResults {
+                    results_path: results_path.clone(),
+                };
+            }
+
+            (Some(_), None) => {
+                warn!("Task {} expected results, but none were produced.", jid);
+
+                task.state = TaskState::Finalize { results_path: None };
+            }
+
+            (None, Some(_)) => {
+                warn!(
+                    "Discarding results for task {} even though they were produced.",
+                    jid
+                );
+
+                task.state = TaskState::Finalize { results_path: None };
+            }
+
+            (None, None) => {
+                task.state = TaskState::Finalize { results_path: None };
+            }
+        }
+
+        true
+    }
+
+    fn try_drive_sm_finalize(
+        jid: usize,
+        task: &mut Task,
+        machines: &mut HashMap<String, MachineStatus>,
+        _running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        results_path: Option<String>,
+    ) -> bool {
+        let machine = task.machine.as_ref().unwrap();
+
+        // If this is a setup task with a class, add the machine to the class. If this is a job,
+        // free the machine.
+        match (&task.ty, &task.class) {
+            (TaskType::SetupTask, Some(class)) => {
+                info!(
+                    "Adding machine {} to class {} after setup task {} completed.",
+                    machine, class, jid
+                );
+
+                // Check if the machine is already there, since it may be running a job.
+                let old = machines.get(machine);
+
+                let running_job = if let Some(old_class) = old {
+                    error!(
+                        "After setup task {}: Removing {} from old class {}. New class is {}",
+                        jid, machine, old_class.class, class
+                    );
+
+                    old_class.running
+                } else {
+                    None
+                };
+
+                info!(
+                    "Add machine {}/{} with running job: {:?}",
+                    machine, class, running_job
+                );
+
+                // Add machine
+                machines.insert(
+                    machine.clone(),
+                    MachineStatus {
+                        class: class.clone(),
+                        running: running_job,
+                    },
+                );
+            }
+
+            (TaskType::Job, _) => {
+                info!("Releasing machine {:?}", machine);
+                machines
+                    .get_mut(machine)
+                    .expect("Job running on non-existant machine.")
+                    .running = None;
+            }
+
+            _ => {}
+        }
+
+        // Move to a Done state.
+        if results_path.is_some() {
+            task.state = TaskState::DoneWithResults {
+                results_path: results_path.unwrap(),
+            };
+        } else {
+            task.state = TaskState::Done;
+        }
+
+        true
+    }
+
+    fn try_drive_sm_canceled(
+        jid: usize,
+        task: &mut Task,
+        machines: &mut HashMap<String, MachineStatus>,
+        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        to_remove: &mut HashSet<usize>,
+    ) -> bool {
+        // Kill any running processes
+        if let Some(mut handle) = running_job_handles.remove(&jid) {
+            let _ = handle.handle.kill(); // SIGKILL
+        }
+
+        // Free any associated machine.
+        let machine = task.machine.as_ref().unwrap();
+        if let Some(machine) = machines.get_mut(machine) {
+            machine.running = None;
+        }
+
+        // Add to the list to be reaped.
+        to_remove.insert(jid);
+
+        true
     }
 
     fn run_cmd(
         jid: usize,
+        task: &Task,
         machine: &str,
-        cmd: &str,
-        cancel_chan: Receiver<()>,
-        variables: &HashMap<String, String>,
         runner: &str,
-    ) -> std::io::Result<Option<String>> {
-        let cmd = cmd_replace_machine(&cmd_replace_vars(&cmd, variables), &machine);
+    ) -> std::io::Result<JobProcessInfo> {
+        let cmd_idx = match task.state {
+            TaskState::Running(idx) => idx,
+            _ => unreachable!(),
+        };
+        let cmd = &task.cmds[cmd_idx];
+        let cmd = cmd_replace_machine(&cmd_replace_vars(&cmd, &task.variables), &machine);
 
-        // Open a tmp file for the cmd output
-        let tmp_file_name = format!("{}", cmd_to_path(jid, &cmd));
-        let mut tmp_file = OpenOptions::new()
+        // The job will output stdout and stderr to these files. When the job completes, we will
+        // search through the stdout file to get the name of the results file to copy, if any.
+
+        let stdout_file_name = format!("{}", cmd_to_path(jid, &cmd));
+        let stdout_file = OpenOptions::new()
             .truncate(true)
             .write(true)
             .create(true)
-            .open(&tmp_file_name)?;
+            .open(&stdout_file_name)?;
 
-        let stderr_file_name = format!("{}.err", tmp_file_name);
+        let stderr_file_name = format!("{}.err", stdout_file_name);
         let stderr_file = OpenOptions::new()
             .truncate(true)
             .write(true)
             .create(true)
             .open(&stderr_file_name)?;
 
-        // Run the command, piping output to a buf reader.
-        let mut child = std::process::Command::new(runner)
+        info!("Starting command: {} {}", runner, cmd);
+
+        let mut child = std::process::Command::new(runner);
+        child
             .arg("--print_results_path")
             .args(&cmd.split_whitespace().collect::<Vec<_>>())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::from(stderr_file))
-            .spawn()?;
-
-        // HACK: the std API doesn't allow us to kill the child while reading stdout, so instead we
-        // take the pid and just send the kill signal manually.
-        let child_pid = child.id();
-
-        let reader = BufReader::new(child.stdout.as_mut().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Could not capture standard output.",
-            )
-        })?);
-
-        // Wait for the output to check for the results path. We do this in a side thread and let
-        // the main thread poll for cancellations.
-        let (results_path_chan_s, results_path_chan_r) = unbounded();
-
-        let results_path = crossbeam::scope(|s| {
-            s.spawn(|_| {
-                let mut results_path = None;
-                reader
-                    .lines()
-                    .filter_map(|line| line.ok())
-                    .for_each(|line| {
-                        // Check if there was a results path printed.
-                        if line.starts_with("RESULTS: ") {
-                            results_path = Some(line[9..].to_string());
-                        }
-
-                        match writeln!(tmp_file, "{}", line) {
-                            Ok(..) => {}
-                            Err(e) => {
-                                error!("Unable to write to tmp file: {} {}", e, line);
-                            }
-                        }
-                    });
-
-                // Receiver may have closed
-                let _ = results_path_chan_s.send(results_path);
-            });
-
-            // Wait for either the child to finish or the cancel signal from the server.
-            select! {
-                recv(results_path_chan_r) -> results_path => match results_path {
-                    Ok(results_path) => {
-                        info!("Job {} completed. Results path: {:?}", jid, results_path);
-                        Ok(results_path)
-                    }
-                    Err(chan_err) => {
-                        error!("Job completed, but there was an error reading results \
-                               path from thread: {}", chan_err);
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "Could not capture standard output.",
-                        ))
-                    }
-                },
-                recv(cancel_chan) -> _ => {
-                    info!("Killing job {}, cmd {}, machine {}", jid, cmd, machine);
-
-                    // SIGKILL the child
-                    unsafe {
-                        libc::kill(child_pid as i32, 9);
-                    }
-
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Job was cancelled."
-                    ))
-                },
-            }
-        });
-
-        let results_path = match results_path {
-            Ok(results_path) => results_path,
-            Err(err) => {
-                error!("Thread panicked while running job {}: {:?}", jid, err);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Thread panicked",
-                ));
-            }
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(stderr_file));
+        unsafe {
+            child.pre_exec(|| {
+                // Resistance to window manager crashes, etc... similar to running with `nohup`.
+                let _ = libc::signal(libc::SIGHUP, libc::SIG_IGN);
+                Ok(())
+            })
         };
 
-        let exit = child.wait()?;
+        // Start!
+        let handle = child.spawn()?;
 
-        if exit.success() {
-            results_path
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Job failed.",
-            ))
-        }
+        Ok(JobProcessInfo {
+            child,
+            handle,
+            stdout: stdout_file_name,
+            stderr: stderr_file_name,
+        })
     }
 }
 
