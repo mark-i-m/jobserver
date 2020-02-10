@@ -960,15 +960,11 @@ impl Server {
                         // Copy via SCP
                         info!("Copying results (job {}) to {}", jid, cp_results);
 
-                        // HACK: assume all machine names are in the form HOSTNAME:PORT, and all
-                        // results are output to `vm_shared/results/` on the remote.
+                        // HACK: assume all machine names are in the form HOSTNAME:PORT.
                         let machine_ip = machine.split(":").next().unwrap();
 
                         let scp_result = std::process::Command::new("scp")
-                            .arg(&format!(
-                                "{}:vm_shared/results/{}", // TODO: make this generic
-                                machine_ip, results_path
-                            ))
+                            .arg(&format!("{}:{}", machine_ip, results_path))
                             .arg(cp_results)
                             .stdout(Stdio::null())
                             .stderr(Stdio::null())
