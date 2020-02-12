@@ -7,7 +7,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
@@ -44,6 +44,10 @@ struct Server {
 
     /// The path to the runner. Never changes.
     runner: String,
+
+    /// Set to true when a client does something. This is mainly optimization to inform whether the
+    /// worker thread might want to check for some work.
+    client_ping: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -210,6 +214,7 @@ impl Server {
             matrices: Arc::new(Mutex::new(HashMap::new())),
             next_jid: AtomicUsize::new(0),
             runner,
+            client_ping: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -238,6 +243,9 @@ impl Server {
 
 impl Server {
     fn handle_client(&self, mut client: TcpStream) -> std::io::Result<()> {
+        // Indicate that the work thread should check for new tasks.
+        self.client_ping.fetch_or(true, Ordering::Relaxed);
+
         let peer_addr = client.peer_addr()?;
         info!("Handling request from {}", peer_addr);
 
@@ -690,12 +698,24 @@ impl Server {
         let mut to_remove = HashSet::new();
         let copying_flags = Arc::new(Mutex::new(HashSet::new()));
 
-        loop {
-            info!("Work thread iteration.");
+        // We keep track of whether any task had a state change. If there was, then there is
+        // increased chance of another state change soon, so iterate with higher frequency.
+        let mut updated = true;
 
-            // We keep track of whether any task had a state change. If there was, then there is
-            // increased chance of another state change soon, so iterate with higher frequency.
-            let mut updated = false;
+        loop {
+            // Sleep 30s, but keep waking up to check if there is likely more work. If there is an
+            // indication of potential work, do a full iteration.
+            for _ in 0..30000 / 100 {
+                std::thread::sleep(Duration::from_millis(100));
+
+                if updated || self.client_ping.fetch_and(false, Ordering::Relaxed) {
+                    break;
+                }
+            }
+
+            updated = false;
+
+            debug!("Work thread iteration.");
 
             {
                 let mut locked_machines = self.machines.lock().unwrap();
@@ -727,12 +747,10 @@ impl Server {
                 // drop locks
             }
 
-            // Sleep a bit.
-            std::thread::sleep(if updated {
-                Duration::from_millis(100)
-            } else {
-                Duration::from_secs(5)
-            });
+            debug!(
+                "Work thread iteration done (updated={:?}). Sleeping.",
+                updated
+            );
         }
     }
 
@@ -796,6 +814,8 @@ impl Server {
             }
 
             TaskState::Error { .. } => {
+                let mut updated = false;
+
                 // Free any associated machine.
                 let machine = task.machine.as_ref().unwrap();
                 if let Some(machine_status) = machines.get_mut(machine) {
@@ -807,9 +827,9 @@ impl Server {
                 }
 
                 // Clean up job handles
-                let _ = running_job_handles.remove(&jid);
+                updated = updated || running_job_handles.remove(&jid).is_some();
 
-                true
+                updated
             }
 
             TaskState::Canceled => {
