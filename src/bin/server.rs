@@ -190,6 +190,14 @@ impl Task {
             TaskState::Canceled => Status::Canceled,
         }
     }
+
+    pub fn update_state(&mut self, new: TaskState) {
+        info!(
+            "Task {} SM Update\nOLD: {:?}\nNEW: {:?}",
+            self.jid, self.state, new
+        );
+        self.state = new;
+    }
 }
 
 impl Server {
@@ -706,6 +714,11 @@ impl Server {
                         );
                 }
 
+                debug!(
+                    "Finished driving SMs. Have {} tasks to reap.",
+                    to_remove.len()
+                );
+
                 // Remove any canceled processes from the task list.
                 for jid in to_remove.drain() {
                     let _ = locked_tasks.remove(&jid);
@@ -736,7 +749,7 @@ impl Server {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
         // so it can get garbage collected.
         if task.canceled {
-            task.state = TaskState::Canceled;
+            task.update_state(TaskState::Canceled);
         }
 
         match task.state {
@@ -759,9 +772,11 @@ impl Server {
             TaskState::CopyingResults { ref results_path } => {
                 // The copy thread will insert a `()` just before it exits, indicating it's done.
                 if copying_flags.lock().unwrap().remove(&jid) {
-                    task.state = TaskState::Finalize {
-                        results_path: Some(results_path.clone()),
-                    };
+                    debug!("Copy results for task {} completed.", jid);
+                    let results_path = results_path.clone();
+                    task.update_state(TaskState::Finalize {
+                        results_path: Some(results_path),
+                    });
                     true
                 } else {
                     false
@@ -783,8 +798,12 @@ impl Server {
             TaskState::Error { .. } => {
                 // Free any associated machine.
                 let machine = task.machine.as_ref().unwrap();
-                if let Some(machine) = machines.get_mut(machine) {
-                    machine.running = None;
+                if let Some(machine_status) = machines.get_mut(machine) {
+                    if machine_status.running.is_some() {
+                        debug!("Freeing machine {} used by failed task {}", machine, jid);
+                        machine_status.running = None;
+                        updated = true;
+                    }
                 }
 
                 // Clean up job handles
@@ -827,7 +846,7 @@ impl Server {
             }
 
             // Mark the task as running.
-            task.state = TaskState::Running(0);
+            task.update_state(TaskState::Running(0));
             task.machine = Some(machine.clone());
 
             match Self::run_cmd(jid, task, &machine, runner) {
@@ -839,9 +858,9 @@ impl Server {
                 Err(err) => {
                     error!("Unable to start job {}: {}", jid, err);
 
-                    task.state = TaskState::Error {
+                    task.update_state(TaskState::Error {
                         error: format!("Unable to start job {}: {}", jid, err),
-                    };
+                    });
                 }
             };
 
@@ -867,12 +886,15 @@ impl Server {
             .get_mut(&jid)
             .expect("No job process info for running command.");
 
-        let machine = task.machine.as_ref().unwrap();
+        let machine = task.machine.as_ref().unwrap().clone();
 
         match job_proc_info.handle.try_wait() {
             // Job terminated.
             Ok(Some(status)) => {
-                info!("Task {} terminated with status code {}.", jid, status);
+                info!(
+                    "Task {} (idx={}) terminated with status code {}.",
+                    jid, idx, status
+                );
 
                 // If status code indicates sucess, then proceed. Otherwise, fail the task.
                 if status.success() {
@@ -880,38 +902,54 @@ impl Server {
                     // Otherwise, start the next command.
                     if idx == task.cmds.len() - 1 {
                         info!("Task {} is complete. Need to check for results.", jid);
-                        task.state = TaskState::CheckingResults;
+                        task.update_state(TaskState::CheckingResults);
                     } else {
-                        info!("Starting cmd {} of task {}.", idx + 1, jid);
-
-                        task.state = TaskState::Running(idx + 1);
+                        // Move to the next task and then attempt to run it.
+                        task.update_state(TaskState::Running(idx + 1));
 
                         // Actually start the command now.
-                        match Self::run_cmd(jid, task, machine, runner) {
+                        match Self::run_cmd(jid, task, &machine, runner) {
                             Ok(job) => {
-                                info!("Running job {} on machine {}", jid, machine);
+                                info!(
+                                    "Running job {} (idx={}) on machine {}",
+                                    jid,
+                                    idx + 1,
+                                    machine
+                                );
+
                                 running_job_handles.insert(jid, job);
                             }
                             Err(err) => {
-                                error!("Unable to start job {}: {}", jid, err);
+                                error!("Unable to start job {} (idx={}): {}", jid, idx + 1, err);
 
-                                task.state = TaskState::Error {
-                                    error: format!("Unable to start job {}: {}", jid, err),
-                                };
+                                task.update_state(TaskState::Error {
+                                    error: format!(
+                                        "Unable to start job {} (command {}): {}",
+                                        jid,
+                                        idx + 1,
+                                        err
+                                    ),
+                                });
                             }
                         };
                     }
                 } else {
-                    task.state = TaskState::Error {
-                        error: format!("Task returned failing exit code: {}", status),
-                    };
+                    task.update_state(TaskState::Error {
+                        error: format!(
+                            "Task (command {}) returned failing exit code: {}",
+                            idx, status
+                        ),
+                    });
                 }
 
                 true
             }
 
             // Not ready yet... do nothing.
-            Ok(None) => false,
+            Ok(None) => {
+                debug!("Task {} is still running", jid);
+                false
+            }
 
             // There was an error waiting for the child... not clear what to do here... for
             // now, we just do nothing and hope it works next time.
@@ -980,15 +1018,15 @@ impl Server {
                     });
                 }
 
-                task.state = TaskState::CopyingResults {
+                task.update_state(TaskState::CopyingResults {
                     results_path: results_path.clone(),
-                };
+                });
             }
 
             (Some(_), None) => {
                 warn!("Task {} expected results, but none were produced.", jid);
 
-                task.state = TaskState::Finalize { results_path: None };
+                task.update_state(TaskState::Finalize { results_path: None });
             }
 
             (None, Some(_)) => {
@@ -997,11 +1035,13 @@ impl Server {
                     jid
                 );
 
-                task.state = TaskState::Finalize { results_path: None };
+                task.update_state(TaskState::Finalize { results_path: None });
             }
 
             (None, None) => {
-                task.state = TaskState::Finalize { results_path: None };
+                info!("Task {} completed without results.", jid);
+
+                task.update_state(TaskState::Finalize { results_path: None });
             }
         }
 
@@ -1068,11 +1108,11 @@ impl Server {
 
         // Move to a Done state.
         if results_path.is_some() {
-            task.state = TaskState::DoneWithResults {
+            task.update_state(TaskState::DoneWithResults {
                 results_path: results_path.unwrap(),
-            };
+            });
         } else {
-            task.state = TaskState::Done;
+            task.update_state(TaskState::Done);
         }
 
         true
@@ -1085,15 +1125,19 @@ impl Server {
         running_job_handles: &mut HashMap<usize, JobProcessInfo>,
         to_remove: &mut HashSet<usize>,
     ) -> bool {
+        info!("Canceling task {}", jid);
+
         // Kill any running processes
         if let Some(mut handle) = running_job_handles.remove(&jid) {
+            info!("Killing task {} process (PID={})", jid, handle.handle.id());
             let _ = handle.handle.kill(); // SIGKILL
         }
 
         // Free any associated machine.
         let machine = task.machine.as_ref().unwrap();
-        if let Some(machine) = machines.get_mut(machine) {
-            machine.running = None;
+        if let Some(machine_status) = machines.get_mut(machine) {
+            info!("Releasing machine {} from canceled task {}", machine, jid);
+            machine_status.running = None;
         }
 
         // Add to the list to be reaped.
