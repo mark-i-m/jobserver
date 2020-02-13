@@ -991,6 +991,10 @@ impl Server {
         // Look through the stdout for the "RESULTS: " line to get the results path.
         let results_path = {
             let cmd = task.cmds.last().unwrap();
+            let cmd = cmd_replace_machine(
+                &cmd_replace_vars(&cmd, &task.variables),
+                &task.machine.as_ref().unwrap(),
+            );
             let stdout_file_name = format!("{}", cmd_to_path(jid, &cmd));
             let file = std::fs::File::open(stdout_file_name).expect("Unable to open stdout file");
             BufReader::new(file)
