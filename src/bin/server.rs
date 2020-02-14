@@ -1,6 +1,6 @@
 //! Server implmentation
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -34,7 +34,7 @@ struct Server {
     variables: Arc<Mutex<HashMap<String, String>>>,
 
     /// Information about queued tasks, by job ID.
-    tasks: Arc<Mutex<HashMap<usize, Task>>>,
+    tasks: Arc<Mutex<BTreeMap<usize, Task>>>,
 
     /// Information about matrices, by ID.
     matrices: Arc<Mutex<HashMap<usize, Matrix>>>,
@@ -210,7 +210,7 @@ impl Server {
         Self {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
-            tasks: Arc::new(Mutex::new(HashMap::new())),
+            tasks: Arc::new(Mutex::new(BTreeMap::new())),
             matrices: Arc::new(Mutex::new(HashMap::new())),
             next_jid: AtomicUsize::new(0),
             runner,
