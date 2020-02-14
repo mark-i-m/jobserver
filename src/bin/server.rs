@@ -765,13 +765,14 @@ impl Server {
     ) -> bool {
         // We need to ensure that the machine is running this task and not another, since it may
         // have been freed and allocated already.
-        let machine = task.machine.as_ref().unwrap();
-        if let Some(machine_status) = machines.get_mut(machine) {
-            if let Some(running_task) = machine_status.running {
-                if running_task == jid {
-                    info!("Freeing machine {} used by task {}", machine, jid);
-                    machine_status.running = None;
-                    return true;
+        if let Some(machine) = task.machine.as_ref() {
+            if let Some(machine_status) = machines.get_mut(machine) {
+                if let Some(running_task) = machine_status.running {
+                    if running_task == jid {
+                        info!("Freeing machine {} used by task {}", machine, jid);
+                        machine_status.running = None;
+                        return true;
+                    }
                 }
             }
         }
