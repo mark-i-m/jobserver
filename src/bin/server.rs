@@ -754,6 +754,29 @@ impl Server {
         }
     }
 
+    /// Frees the machine if it is associated with the given task. Does nothing if this machine is
+    /// not running this task. Returns true if a machine was freed.
+    fn free_machine(
+        jid: usize,
+        task: &Task,
+        machines: &mut HashMap<String, MachineStatus>,
+    ) -> bool {
+        // We need to ensure that the machine is running this task and not another, since it may
+        // have been freed and allocated already.
+        let machine = task.machine.as_ref().unwrap();
+        if let Some(machine_status) = machines.get_mut(machine) {
+            if let Some(running_task) = machine_status.running {
+                if running_task == jid {
+                    info!("Freeing machine {} used by task {}", machine, jid);
+                    machine_status.running = None;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     /// Attempts to drive the given task's state machine forward one step.
     fn try_drive_sm(
         runner: &str,
@@ -814,17 +837,8 @@ impl Server {
             }
 
             TaskState::Error { .. } => {
-                let mut updated = false;
-
                 // Free any associated machine.
-                let machine = task.machine.as_ref().unwrap();
-                if let Some(machine_status) = machines.get_mut(machine) {
-                    if machine_status.running.is_some() {
-                        debug!("Freeing machine {} used by failed task {}", machine, jid);
-                        machine_status.running = None;
-                        updated = true;
-                    }
-                }
+                let mut updated = Self::free_machine(jid, task, machines);
 
                 // Clean up job handles
                 updated = updated || running_job_handles.remove(&jid).is_some();
@@ -1121,10 +1135,7 @@ impl Server {
 
             (TaskType::Job, _) => {
                 info!("Releasing machine {:?}", machine);
-                machines
-                    .get_mut(machine)
-                    .expect("Job running on non-existant machine.")
-                    .running = None;
+                Self::free_machine(jid, task, machines);
             }
 
             _ => {}
@@ -1158,11 +1169,7 @@ impl Server {
         }
 
         // Free any associated machine.
-        let machine = task.machine.as_ref().unwrap();
-        if let Some(machine_status) = machines.get_mut(machine) {
-            info!("Releasing machine {} from canceled task {}", machine, jid);
-            machine_status.running = None;
-        }
+        Self::free_machine(jid, task, machines);
 
         // Add to the list to be reaped.
         to_remove.insert(jid);
