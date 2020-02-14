@@ -160,6 +160,18 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "The job ID of the job")
             )
 
+            (@subcommand hold =>
+                (about: "Put the job on hold.")
+                (@arg JID: +required {is_usize}
+                 "The job ID of the job")
+            )
+
+            (@subcommand unhold =>
+                (about: "Unold the job.")
+                (@arg JID: +required {is_usize}
+                 "The job ID of the job")
+            )
+
             (@subcommand clone =>
                 (about: "Clone a job.")
                 (@arg JID: +required {is_usize} ...
@@ -339,6 +351,24 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("stat", Some(sub_m)) => {
             let req = JobServerReq::JobStatus {
+                jid: Jid::from(sub_m.value_of("JID").unwrap()).into(),
+            };
+
+            let response = make_request(addr, req);
+            println!("Server response: {:?}", response);
+        }
+
+        ("hold", Some(sub_m)) => {
+            let req = JobServerReq::HoldJob {
+                jid: Jid::from(sub_m.value_of("JID").unwrap()).into(),
+            };
+
+            let response = make_request(addr, req);
+            println!("Server response: {:?}", response);
+        }
+
+        ("unhold", Some(sub_m)) => {
+            let req = JobServerReq::UnholdJob {
                 jid: Jid::from(sub_m.value_of("JID").unwrap()).into(),
             };
 
@@ -710,6 +740,19 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 jid,
                 mut cmd,
                 class,
+                status: Status::Held,
+                variables: _variables,
+            } => {
+                if !is_long {
+                    cmd.truncate(TRUNC);
+                }
+                table.add_row(row![b->jid, Fb->"Held", class, cmd, "", ""]);
+            }
+
+            JobInfo {
+                jid,
+                mut cmd,
+                class,
                 status:
                     Status::Done {
                         machine,
@@ -854,6 +897,7 @@ fn make_matrix_csv_inner(
             match job.status {
                 Status::Canceled => "Canceled".to_owned(),
                 Status::Waiting => "Waiting".to_owned(),
+                Status::Held => "Held".to_owned(),
                 Status::Running { .. } => "Running".to_owned(),
                 Status::Failed { .. } => "Failed".to_owned(),
 

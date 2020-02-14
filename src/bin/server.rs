@@ -62,6 +62,9 @@ enum TaskState {
     /// This task has not yet started running.
     Waiting,
 
+    /// This task has not yet started running and is on hold.
+    Held,
+
     /// This task is running the `n`th command in the `cmds` vector.
     Running(usize),
 
@@ -173,6 +176,7 @@ impl Task {
     pub fn status(&self) -> Status {
         match &self.state {
             TaskState::Waiting => Status::Waiting,
+            TaskState::Held => Status::Held,
             TaskState::Running(..)
             | TaskState::CheckingResults { .. }
             | TaskState::CopyingResults { .. }
@@ -420,6 +424,60 @@ impl Server {
                 // drop locks
             }
 
+            HoldJob { jid } => {
+                let mut locked_tasks = self.tasks.lock().unwrap();
+                let task = locked_tasks.get_mut(&jid);
+
+                match task {
+                    Some(task) => {
+                        let is_waiting = match task.state {
+                            TaskState::Waiting | TaskState::Held => true,
+                            _ => false,
+                        };
+
+                        if is_waiting {
+                            task.state = TaskState::Held;
+                            JobServerResp::Ok
+                        } else {
+                            error!(
+                                "Attempted to put task {} on hold, but current state is {:?}",
+                                jid, task.state
+                            );
+                            JobServerResp::NotWaiting
+                        }
+                    }
+
+                    None => JobServerResp::NoSuchJob,
+                }
+            }
+
+            UnholdJob { jid } => {
+                let mut locked_tasks = self.tasks.lock().unwrap();
+                let task = locked_tasks.get_mut(&jid);
+
+                match task {
+                    Some(task) => {
+                        let is_held = match task.state {
+                            TaskState::Held => true,
+                            _ => false,
+                        };
+
+                        if is_held {
+                            task.state = TaskState::Waiting;
+                            JobServerResp::Ok
+                        } else {
+                            error!(
+                                "Attempted to unhold task {}, but current state is {:?}",
+                                jid, task.state
+                            );
+                            JobServerResp::NotWaiting
+                        }
+                    }
+
+                    None => JobServerResp::NoSuchJob,
+                }
+            }
+
             CancelJob { jid } => self.cancel_job(jid),
 
             JobStatus { jid } => {
@@ -457,7 +515,7 @@ impl Server {
                         info!("Status setup task {}, {:?}", jid, task);
 
                         let cmd = match state {
-                            TaskState::Waiting => &cmds[0],
+                            TaskState::Waiting | TaskState::Held => &cmds[0],
                             TaskState::Running(idx) => &cmds[*idx],
                             TaskState::Done
                             | TaskState::DoneWithResults { .. }
@@ -797,6 +855,11 @@ impl Server {
         }
 
         match task.state {
+            TaskState::Held => {
+                info!("Task {} is held.", jid);
+                false
+            }
+
             TaskState::Waiting => {
                 Self::try_drive_sm_waiting(runner, jid, task, machines, running_job_handles)
             }

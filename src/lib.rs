@@ -89,6 +89,12 @@ pub enum JobServerReq {
         jid: usize,
     },
 
+    /// Put a job on hold.
+    HoldJob { jid: usize },
+
+    /// Unhold a job on hold.
+    UnholdJob { jid: usize },
+
     /// Start a matrix with the given variables and command template.
     AddMatrix {
         /// The variables and their values, which we take the Cartesian Product over.
@@ -172,6 +178,10 @@ pub enum JobServerResp {
 
     /// Error. No such matrix.
     NoSuchMatrix,
+
+    /// Error. The job we tried to hold is not waiting (i.e. already running or done) or the job we
+    /// tried to unhold was not held.
+    NotWaiting,
 }
 
 /// The status of a job.
@@ -194,6 +204,9 @@ pub enum Status {
         /// The name of the output files, if any.
         output: Option<String>,
     },
+
+    /// Held.
+    Held,
 
     /// The job was canceled.
     Canceled,
