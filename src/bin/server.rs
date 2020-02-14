@@ -434,7 +434,7 @@ impl Server {
                         variables,
                         ..
                     }) => {
-                        info!("Stating job {}, {:?}", jid, task);
+                        info!("Status of job {}, {:?}", jid, task);
 
                         JobServerResp::JobStatus {
                             jid: *jid,
@@ -454,7 +454,7 @@ impl Server {
                         variables,
                         ..
                     }) => {
-                        info!("Stating setup task {}, {:?}", jid, task);
+                        info!("Status setup task {}, {:?}", jid, task);
 
                         let cmd = match state {
                             TaskState::Waiting => &cmds[0],
@@ -647,7 +647,7 @@ impl Server {
 
             StatMatrix { id } => {
                 if let Some(matrix) = self.matrices.lock().unwrap().get(&id) {
-                    info!("Stating matrix {}, {:?}", id, matrix);
+                    info!("Status of matrix {}, {:?}", id, matrix);
 
                     JobServerResp::MatrixStatus {
                         id,
