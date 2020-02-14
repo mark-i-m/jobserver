@@ -721,6 +721,8 @@ impl Server {
                 let mut locked_machines = self.machines.lock().unwrap();
                 let mut locked_tasks = self.tasks.lock().unwrap();
 
+                debug!("Machine stata: {:?}", *locked_machines);
+
                 for (jid, task) in locked_tasks.iter_mut() {
                     updated = updated
                         || Self::try_drive_sm(
@@ -1136,12 +1138,12 @@ impl Server {
                 }
             }
 
-            (TaskType::Job, _) => {
+            (TaskType::SetupTask, None) | (TaskType::Job, _) => {
+                // If this is a setup task, we still want to free machines that were already part
+                // of the pool.
                 info!("Releasing machine {:?}", machine);
                 Self::free_machine(jid, task, machines);
             }
-
-            _ => {}
         }
 
         // Move to a Done state.
