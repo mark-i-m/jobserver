@@ -1123,14 +1123,17 @@ impl Server {
                     machine, class, running_job
                 );
 
-                // Add machine
-                machines.insert(
-                    machine.clone(),
-                    MachineStatus {
-                        class: class.clone(),
-                        running: running_job,
-                    },
-                );
+                // Add machine (or free it if it was already part of the pool)
+                let already = Self::free_machine(jid, task, machines);
+                if !already {
+                    machines.insert(
+                        machine.clone(),
+                        MachineStatus {
+                            class: class.clone(),
+                            running: running_job,
+                        },
+                    );
+                }
             }
 
             (TaskType::Job, _) => {
