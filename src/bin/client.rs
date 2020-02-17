@@ -50,7 +50,7 @@ impl std::fmt::Display for Jid {
 fn build_cli() -> clap::App<'static, 'static> {
     clap_app! { client =>
         (about: "CLI client for the jobserver")
-        (@setting SubcommandRequired)
+        (@setting SubcommandRequiredElseHelp)
         (@setting DisableVersion)
 
         (@arg ADDR: --address +takes_value
@@ -62,6 +62,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
         (@subcommand completions =>
             (about: "Produce shell completion scripts for the client")
+            (@setting ArgRequiredElseHelp)
             (@arg OUTDIR: +required
              "The directory to generate the completions script to.")
             (@group SHELL =>
@@ -80,10 +81,11 @@ fn build_cli() -> clap::App<'static, 'static> {
 
         (@subcommand machine =>
             (about: "Operations on the available pool of machines.")
-            (@setting SubcommandRequired)
+            (@setting SubcommandRequiredElseHelp)
 
             (@subcommand add =>
                 (about: "Make the given machine available with the given class.")
+                (@setting ArgRequiredElseHelp)
                 (@arg ADDR: +required
                  "The IP:PORT of the machine")
                 (@arg CLASS: +required
@@ -92,6 +94,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand rm =>
                 (about: "Remove the given machine from the available pool.")
+                (@setting ArgRequiredElseHelp)
                 (@arg ADDR: +required
                  "The IP:PORT of the machine")
             )
@@ -102,6 +105,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand setup =>
                 (about: "Set up the given machine using the given command")
+                (@setting ArgRequiredElseHelp)
                 (@arg ADDR: +required
                  "The IP:PORT of the machine")
                 (@arg CMD: +required ...
@@ -113,7 +117,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
         (@subcommand var =>
             (about: "Operations on variables.")
-            (@setting SubcommandRequired)
+            (@setting SubcommandRequiredElseHelp)
 
             (@subcommand ls =>
                 (about: "List variables and their values.")
@@ -121,6 +125,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand set =>
                 (about: "Set the given variable to be substituted in commands")
+                (@setting ArgRequiredElseHelp)
                 (@arg NAME: +required
                  "The variable name")
                 (@arg VALUE: +required
@@ -130,10 +135,11 @@ fn build_cli() -> clap::App<'static, 'static> {
 
         (@subcommand job =>
             (about: "Operations on jobs.")
-            (@setting SubcommandRequired)
+            (@setting SubcommandRequiredElseHelp)
 
             (@subcommand add =>
                 (about: "Add a job to be run on the given class of machine.")
+                (@setting ArgRequiredElseHelp)
                 (@arg CLASS: +required
                  "The class of machine that can execute the job")
                 (@arg CMD: +required
@@ -150,36 +156,42 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand rm =>
                 (about: "Cancel a running/scheduled job OR delete a finished/failed job.")
+                (@setting ArgRequiredElseHelp)
                 (@arg JID: +required ... {is_usize}
                  "The job ID(s) of the job(s) to cancel")
             )
 
             (@subcommand stat =>
                 (about: "Get information on the status of a job.")
+                (@setting ArgRequiredElseHelp)
                 (@arg JID: +required {is_usize}
                  "The job ID of the job")
             )
 
             (@subcommand hold =>
                 (about: "Put the job on hold.")
+                (@setting ArgRequiredElseHelp)
                 (@arg JID: +required {is_usize}
                  "The job ID of the job")
             )
 
             (@subcommand unhold =>
                 (about: "Unold the job.")
+                (@setting ArgRequiredElseHelp)
                 (@arg JID: +required {is_usize}
                  "The job ID of the job")
             )
 
             (@subcommand clone =>
                 (about: "Clone a job.")
+                (@setting ArgRequiredElseHelp)
                 (@arg JID: +required {is_usize} ...
                  "The job ID(s) of the job to clone.")
             )
 
             (@subcommand log =>
                 (about: "Print the path to the job log.")
+                (@setting ArgRequiredElseHelp)
                 (@group WHICH =>
                     (@attributes +required)
                     (@arg JID: {is_usize} ...
@@ -195,10 +207,11 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand matrix =>
                 (about: "Operations with job matrices")
-                (@setting SubcommandRequired)
+                (@setting SubcommandRequiredElseHelp)
 
                 (@subcommand add =>
                     (about: "Create a matrix of jobs on the given class of machine.")
+                    (@setting ArgRequiredElseHelp)
                     (@arg CLASS: +required
                      "The class of machine that can execute the jobs.")
                     (@arg CMD: +required
@@ -211,6 +224,7 @@ fn build_cli() -> clap::App<'static, 'static> {
 
                 (@subcommand stat =>
                     (about: "Get information on the status of a matrix.")
+                    (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
                      "The matrix ID of the matrix")
                     (@arg LONG: --long
@@ -220,6 +234,7 @@ fn build_cli() -> clap::App<'static, 'static> {
                 (@subcommand csv =>
                     (about: "Output information about the matrix and current/finished jobs \
                      to a CSV file.")
+                    (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
                      "The matrix ID of the matrix")
                     (@arg FILE: +required
