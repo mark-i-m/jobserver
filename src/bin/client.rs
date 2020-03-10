@@ -257,7 +257,7 @@ fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ping", _) => {
             let response = make_request(addr, JobServerReq::Ping);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("completions", Some(sub_m)) => {
@@ -308,7 +308,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("rm", Some(sub_m)) => {
@@ -317,7 +317,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("setup", Some(sub_m)) => {
@@ -328,7 +328,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         _ => unreachable!(),
@@ -339,7 +339,7 @@ fn handle_var_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(_sub_m)) => {
             let response = make_request(addr, JobServerReq::ListVars);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("set", Some(sub_m)) => {
@@ -349,7 +349,7 @@ fn handle_var_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         _ => unreachable!(),
@@ -370,7 +370,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("hold", Some(sub_m)) => {
@@ -379,7 +379,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("unhold", Some(sub_m)) => {
@@ -388,7 +388,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("log", Some(sub_m)) => {
@@ -450,7 +450,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("rm", Some(sub_m)) => {
@@ -461,7 +461,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         jid: Jid::from(jid).into(),
                     },
                 );
-                println!("Server response: {:?}", response);
+                println!("Server response: {:#?}", response);
             }
         }
 
@@ -473,7 +473,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         jid: Jid::from(jid).into(),
                     },
                 );
-                println!("Server response: {:?}", response);
+                println!("Server response: {:#?}", response);
             }
         }
 
@@ -505,7 +505,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let response = make_request(addr, req);
-            println!("Server response: {:?}", response);
+            println!("Server response: {:#?}", response);
         }
 
         ("stat", Some(sub_m)) => {
@@ -524,7 +524,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     let jobs = stat_jobs(addr, &mut jobs);
                     print_jobs(jobs, is_long);
                 }
-                _ => println!("Server response: {:?}", response),
+                _ => println!("Server response: {:#?}", response),
             }
         }
 
@@ -550,7 +550,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     let jobs = stat_jobs(addr, &mut jobs);
                     make_matrix_csv(file, id, variables, jobs);
                 }
-                _ => println!("Server response: {:?}", response),
+                _ => println!("Server response: {:#?}", response),
             }
         }
 
@@ -584,7 +584,7 @@ fn get_job_log_path(addr: &str, jid: Jid) -> String {
             _ => format!("/dev/null"),
         },
 
-        resp => format!("{:?}", resp),
+        resp => format!("{:#?}", resp),
     }
 }
 
