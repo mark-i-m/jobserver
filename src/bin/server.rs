@@ -1322,6 +1322,11 @@ fn main() {
     let logging_config = matches.value_of("LOGGING_CONFIG").unwrap();
     let runner = matches.value_of("RUNNER").unwrap();
 
+    // Set the RUST_BACKTRACE environment variable so that we always get backtraces. Normally, one
+    // doesn't want this because of the performance penalty, but in this case, we don't care too
+    // much, whereas the debugging improvement is massive.
+    std::env::set_var("RUST_BACKTRACE", "1");
+
     // Start logger
     log4rs::init_file(logging_config, Default::default()).expect("Unable to init logger");
 
