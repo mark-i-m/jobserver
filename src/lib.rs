@@ -147,6 +147,8 @@ pub enum JobServerResp {
         jid: usize,
         status: Status,
         variables: HashMap<String, String>,
+        /// The path to the job log. This will be `/dev/null` if the job has not started yet.
+        log: String,
     },
 
     /// Succeeded. The status of a matrix.
@@ -231,9 +233,10 @@ pub fn cmd_replace_machine(cmd: &str, machine: &str) -> String {
     cmd.replace("{MACHINE}", &machine)
 }
 
-pub fn cmd_to_path(jid: usize, cmd: &str) -> String {
+pub fn cmd_to_path(jid: usize, cmd: &str, log_dir: &str) -> String {
     let mut name = format!(
-        "/tmp/{}-{}",
+        "{}/{}-{}",
+        log_dir,
         jid,
         cmd.replace(" ", "_")
             .replace("{", "_")

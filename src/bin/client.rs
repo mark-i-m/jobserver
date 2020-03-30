@@ -9,10 +9,7 @@ use std::os::unix::process::CommandExt;
 
 use clap::clap_app;
 
-use jobserver::{
-    cmd_replace_machine, cmd_replace_vars, cmd_to_path, JobServerReq, JobServerResp, Status,
-    SERVER_ADDR,
-};
+use jobserver::{JobServerReq, JobServerResp, Status, SERVER_ADDR};
 
 use prettytable::{cell, row, Table};
 
@@ -564,26 +561,7 @@ fn get_job_log_path(addr: &str, jid: Jid) -> String {
     let status = make_request(addr, req);
 
     match status {
-        JobServerResp::JobStatus {
-            cmd,
-            status,
-            variables,
-            ..
-        } => match status {
-            Status::Done { machine, .. }
-            | Status::Failed {
-                machine: Some(machine),
-                ..
-            }
-            | Status::Running { machine } => {
-                let cmd = cmd_replace_machine(&cmd_replace_vars(&cmd, &variables), &machine);
-                let path = cmd_to_path(jid.into(), &cmd);
-                format!("{}", path)
-            }
-
-            _ => format!("/dev/null"),
-        },
-
+        JobServerResp::JobStatus { log, .. } => log,
         resp => format!("{:#?}", resp),
     }
 }
@@ -644,6 +622,7 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
                 jid,
                 status,
                 variables,
+                ..
             } = status
             {
                 Some(JobInfo {
@@ -731,6 +710,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 class,
                 status: Status::Canceled,
                 variables: _variables,
+                ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
@@ -744,6 +724,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 class,
                 status: Status::Waiting,
                 variables: _variables,
+                ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
@@ -757,6 +738,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 class,
                 status: Status::Held,
                 variables: _variables,
+                ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
@@ -774,6 +756,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                         output: None,
                     },
                 variables: _variables,
+                ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
@@ -791,6 +774,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                         output: Some(path),
                     },
                 variables: _variables,
+                ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
@@ -805,6 +789,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 class,
                 status: Status::Failed { error, machine },
                 variables: _variables,
+                ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
@@ -819,6 +804,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 class,
                 status: Status::Running { machine },
                 variables: _variables,
+                ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);

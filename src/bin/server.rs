@@ -45,8 +45,11 @@ struct Server {
     /// The path to the runner. Never changes.
     runner: String,
 
-    /// Set to true when a client does something. This is mainly optimization to inform whether the
-    /// worker thread might want to check for some work.
+    /// The directory into which to write job logs.
+    log_dir: String,
+
+    /// Set to true when a client does something. This is mainly optimization to inform whether
+    /// the worker thread might want to check for some work.
     client_ping: Arc<AtomicBool>,
 }
 
@@ -210,7 +213,7 @@ impl Task {
 
 impl Server {
     /// Creates a new server. Not listening yet.
-    pub fn new(runner: String) -> Self {
+    pub fn new(runner: String, log_dir: String) -> Self {
         Self {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
@@ -218,6 +221,7 @@ impl Server {
             matrices: Arc::new(Mutex::new(HashMap::new())),
             next_jid: AtomicUsize::new(0),
             runner,
+            log_dir,
             client_ping: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -490,9 +494,20 @@ impl Server {
                         class,
                         cmds,
                         variables,
+                        machine,
                         ..
                     }) => {
                         info!("Status of job {}, {:?}", jid, task);
+
+                        let log = if let Some(machine) = machine {
+                            let cmd = cmd_replace_machine(
+                                &cmd_replace_vars(cmds.first().unwrap(), &variables),
+                                &machine,
+                            );
+                            format!("{}", cmd_to_path(*jid, &cmd, &self.log_dir))
+                        } else {
+                            "/dev/null".into()
+                        };
 
                         JobServerResp::JobStatus {
                             jid: *jid,
@@ -500,6 +515,7 @@ impl Server {
                             cmd: cmds.first().unwrap().clone(),
                             status: task.unwrap().status(),
                             variables: variables.clone(),
+                            log,
                         }
                     }
 
@@ -510,6 +526,7 @@ impl Server {
                         cmds,
                         state,
                         variables,
+                        machine,
                         ..
                     }) => {
                         info!("Status setup task {}, {:?}", jid, task);
@@ -527,12 +544,21 @@ impl Server {
                         }
                         .clone();
 
+                        let log = if let Some(machine) = machine {
+                            let cmd =
+                                cmd_replace_machine(&cmd_replace_vars(&cmd, &variables), &machine);
+                            format!("{}", cmd_to_path(*jid, &cmd, &self.log_dir))
+                        } else {
+                            "/dev/null".into()
+                        };
+
                         JobServerResp::JobStatus {
                             jid: *jid,
                             class: class.as_ref().map(Clone::clone).unwrap_or("".into()),
                             cmd,
                             status: task.unwrap().status(),
                             variables: variables.clone(),
+                            log,
                         }
                     }
 
@@ -785,6 +811,7 @@ impl Server {
                     updated = updated
                         || Self::try_drive_sm(
                             &self.runner,
+                            &self.log_dir,
                             *jid,
                             task,
                             &mut *locked_machines,
@@ -841,6 +868,7 @@ impl Server {
     /// Attempts to drive the given task's state machine forward one step.
     fn try_drive_sm(
         runner: &str,
+        log_dir: &str,
         jid: usize,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
@@ -860,13 +888,24 @@ impl Server {
                 false
             }
 
-            TaskState::Waiting => {
-                Self::try_drive_sm_waiting(runner, jid, task, machines, running_job_handles)
-            }
+            TaskState::Waiting => Self::try_drive_sm_waiting(
+                runner,
+                log_dir,
+                jid,
+                task,
+                machines,
+                running_job_handles,
+            ),
 
-            TaskState::Running(idx) => {
-                Self::try_drive_sm_running(runner, jid, task, machines, running_job_handles, idx)
-            }
+            TaskState::Running(idx) => Self::try_drive_sm_running(
+                runner,
+                log_dir,
+                jid,
+                task,
+                machines,
+                running_job_handles,
+                idx,
+            ),
 
             TaskState::CheckingResults => Self::try_drive_sm_checking_results(
                 jid,
@@ -874,6 +913,7 @@ impl Server {
                 machines,
                 running_job_handles,
                 copying_flags,
+                log_dir,
             ),
 
             TaskState::CopyingResults { ref results_path } => {
@@ -921,6 +961,7 @@ impl Server {
     /// The task has not started yet. Attempt to do so now.
     fn try_drive_sm_waiting(
         runner: &str,
+        log_dir: &str,
         jid: usize,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
@@ -949,7 +990,7 @@ impl Server {
             task.update_state(TaskState::Running(0));
             task.machine = Some(machine.clone());
 
-            match Self::run_cmd(jid, task, &machine, runner) {
+            match Self::run_cmd(jid, task, &machine, runner, log_dir) {
                 Ok(job) => {
                     info!("Running job {} on machine {}", jid, machine);
 
@@ -976,6 +1017,7 @@ impl Server {
     /// we attempt to start the next command, if any, or move to copy results, if any.
     fn try_drive_sm_running(
         runner: &str,
+        log_dir: &str,
         jid: usize,
         task: &mut Task,
         _machines: &mut HashMap<String, MachineStatus>,
@@ -1008,7 +1050,7 @@ impl Server {
                         task.update_state(TaskState::Running(idx + 1));
 
                         // Actually start the command now.
-                        match Self::run_cmd(jid, task, &machine, runner) {
+                        match Self::run_cmd(jid, task, &machine, runner, log_dir) {
                             Ok(job) => {
                                 info!(
                                     "Running job {} (idx={}) on machine {}",
@@ -1067,6 +1109,7 @@ impl Server {
         _machines: &mut HashMap<String, MachineStatus>,
         _running_job_handles: &mut HashMap<usize, JobProcessInfo>,
         copying_flags: Arc<Mutex<HashSet<usize>>>,
+        log_dir: &str,
     ) -> bool {
         // Look through the stdout for the "RESULTS: " line to get the results path.
         let results_path = {
@@ -1075,7 +1118,7 @@ impl Server {
                 &cmd_replace_vars(&cmd, &task.variables),
                 &task.machine.as_ref().unwrap(),
             );
-            let stdout_file_name = format!("{}", cmd_to_path(jid, &cmd));
+            let stdout_file_name = format!("{}", cmd_to_path(jid, &cmd, log_dir));
             let file = std::fs::File::open(stdout_file_name).expect("Unable to open stdout file");
             BufReader::new(file)
                 .lines()
@@ -1251,6 +1294,7 @@ impl Server {
         task: &Task,
         machine: &str,
         runner: &str,
+        log_dir: &str,
     ) -> std::io::Result<JobProcessInfo> {
         let cmd_idx = match task.state {
             TaskState::Running(idx) => idx,
@@ -1262,7 +1306,7 @@ impl Server {
         // The job will output stdout and stderr to these files. When the job completes, we will
         // search through the stdout file to get the name of the results file to copy, if any.
 
-        let stdout_file_name = format!("{}", cmd_to_path(jid, &cmd));
+        let stdout_file_name = format!("{}", cmd_to_path(jid, &cmd, log_dir));
         let stdout_file = OpenOptions::new()
             .truncate(true)
             .write(true)
@@ -1310,9 +1354,11 @@ fn main() {
         (@arg RUNNER: +required
          "Path to the runner binary. This binary is provided with \
          the arguments of the submitted job command.")
+        (@arg LOG_DIR: +required
+         "This is the directory in which to write job logs.")
         (@arg LOGGING_CONFIG: +required
          "Path to the log4rs config file")
-        (@arg ADDR: --addr +takes_value
+        (@arg ADDR: --address +takes_value
          "The IP:ADDR for the server to listen on for commands \
          (defaults to `localhost:3030`)")
     }
@@ -1321,6 +1367,7 @@ fn main() {
     let addr = matches.value_of("ADDR").unwrap_or(SERVER_ADDR.into());
     let logging_config = matches.value_of("LOGGING_CONFIG").unwrap();
     let runner = matches.value_of("RUNNER").unwrap();
+    let log_dir = matches.value_of("LOG_DIR").unwrap();
 
     // Set the RUST_BACKTRACE environment variable so that we always get backtraces. Normally, one
     // doesn't want this because of the performance penalty, but in this case, we don't care too
@@ -1333,7 +1380,7 @@ fn main() {
     info!("Starting server at {}", addr);
 
     // Listen for client requests on the main thread, while we do work in the background.
-    let server = Arc::new(Server::new(runner.into()));
+    let server = Arc::new(Server::new(runner.into(), log_dir.into()));
     Arc::clone(&server).start_work_thread();
     server.listen(addr);
 }
