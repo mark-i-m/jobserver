@@ -80,6 +80,9 @@ enum TaskState {
     /// Everything is done, and we are about to move to a Done state.
     Finalize { results_path: Option<String> },
 
+    /// This task was canceled. If `remove` is true, then it will be garbage collected.
+    Canceled { remove: bool },
+
     /// This task has completed.
     Done,
 
@@ -92,8 +95,8 @@ enum TaskState {
     /// This task terminated with an error.
     Error { error: String },
 
-    /// This task was canceled and has yet to be garbage collected.
-    Canceled,
+    /// This task was killed/canceled, but not garbage collected.
+    Killed,
 }
 
 /// Information about a single task (a job or setup task). This is a big state machine that says
@@ -121,8 +124,8 @@ struct Task {
     /// The commands (without replacements).
     cmds: Vec<String>,
 
-    /// Set to `true` if the task is canceled; `false` otherwise.
-    canceled: bool,
+    /// Set to `Some` if the task is canceled; if `Some(true)` the task should be gc'ed.
+    canceled: Option<bool>,
 
     /// The state of the task that we are currently in. This defines a state machine for the task.
     state: TaskState,
@@ -198,7 +201,7 @@ impl Task {
                 machine: Some(self.machine.as_ref().unwrap().clone()),
                 error: error.clone(),
             },
-            TaskState::Canceled => Status::Canceled,
+            TaskState::Canceled { .. } | TaskState::Killed => Status::Canceled,
         }
     }
 
@@ -324,7 +327,7 @@ impl Server {
 
                     // Cancel any running jobs on the machine.
                     if let Some(running) = old_class.running {
-                        self.cancel_job(running);
+                        self.cancel_job(running, false);
                     }
 
                     JobServerResp::Ok
@@ -366,7 +369,7 @@ impl Server {
                         state: TaskState::Waiting,
                         variables,
                         cp_results: None,
-                        canceled: false,
+                        canceled: None,
                     },
                 );
 
@@ -415,7 +418,7 @@ impl Server {
                         state: TaskState::Waiting,
                         variables,
                         machine: None,
-                        canceled: false,
+                        canceled: None,
                     },
                 );
 
@@ -482,7 +485,7 @@ impl Server {
                 }
             }
 
-            CancelJob { jid } => self.cancel_job(jid),
+            CancelJob { jid, remove } => self.cancel_job(jid, remove),
 
             JobStatus { jid } => {
                 let locked_tasks = self.tasks.lock().unwrap();
@@ -540,7 +543,8 @@ impl Server {
                             | TaskState::CheckingResults
                             | TaskState::CopyingResults { .. }
                             | TaskState::Finalize { .. }
-                            | TaskState::Canceled => cmds.last().unwrap(),
+                            | TaskState::Canceled { .. }
+                            | TaskState::Killed => cmds.last().unwrap(),
                         }
                         .clone();
 
@@ -608,7 +612,7 @@ impl Server {
                                 variables,
                                 state: TaskState::Waiting,
                                 machine: None,
-                                canceled: false,
+                                canceled: None,
                             },
                         );
 
@@ -647,7 +651,7 @@ impl Server {
                                 cp_results: None,
                                 state: TaskState::Waiting,
                                 variables,
-                                canceled: false,
+                                canceled: None,
                             },
                         );
 
@@ -709,7 +713,7 @@ impl Server {
                             state: TaskState::Waiting,
                             variables: config,
                             machine: None,
-                            canceled: false,
+                            canceled: None,
                         },
                     );
                 }
@@ -755,12 +759,12 @@ impl Server {
 impl Server {
     /// Mark the given job as canceled. This doesn't actually do anything yet. The job will be
     /// killed and removed asynchronously.
-    fn cancel_job(&self, jid: usize) -> JobServerResp {
+    fn cancel_job(&self, jid: usize, remove: bool) -> JobServerResp {
         // We set the `canceled` flag and let the job server handle the rest.
 
         if let Some(job) = self.tasks.lock().unwrap().get_mut(&jid) {
             info!("Cancelling task {}, {:?}", jid, job);
-            job.canceled = true;
+            job.canceled = Some(remove);
             JobServerResp::Ok
         } else {
             error!("No such job: {}", jid);
@@ -878,8 +882,8 @@ impl Server {
     ) -> bool {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
         // so it can get garbage collected.
-        if task.canceled {
-            task.update_state(TaskState::Canceled);
+        if let Some(remove) = task.canceled {
+            task.update_state(TaskState::Canceled { remove });
         }
 
         match task.state {
@@ -935,7 +939,7 @@ impl Server {
 
                 Self::try_drive_sm_finalize(jid, task, machines, running_job_handles, results_path)
             }
-            TaskState::Done | TaskState::DoneWithResults { .. } => {
+            TaskState::Done | TaskState::DoneWithResults { .. } | TaskState::Killed => {
                 let old = running_job_handles.remove(&jid);
 
                 // Update occured if we actually removed something.
@@ -952,9 +956,14 @@ impl Server {
                 updated
             }
 
-            TaskState::Canceled => {
-                Self::try_drive_sm_canceled(jid, task, machines, running_job_handles, to_remove)
-            }
+            TaskState::Canceled { remove } => Self::try_drive_sm_canceled(
+                jid,
+                task,
+                machines,
+                running_job_handles,
+                to_remove,
+                remove,
+            ),
         }
     }
 
@@ -1271,6 +1280,7 @@ impl Server {
         machines: &mut HashMap<String, MachineStatus>,
         running_job_handles: &mut HashMap<usize, JobProcessInfo>,
         to_remove: &mut HashSet<usize>,
+        remove: bool,
     ) -> bool {
         info!("Canceling task {}", jid);
 
@@ -1283,8 +1293,13 @@ impl Server {
         // Free any associated machine.
         Self::free_machine(jid, task, machines);
 
-        // Add to the list to be reaped.
-        to_remove.insert(jid);
+        // Add to the list to be reaped, if the job is to be removed.
+        if remove {
+            to_remove.insert(jid);
+        } else {
+            task.update_state(TaskState::Killed);
+            task.canceled = None; // No need to cancel it again!
+        }
 
         true
     }

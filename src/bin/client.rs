@@ -156,6 +156,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                 (@setting ArgRequiredElseHelp)
                 (@arg JID: +required ... {is_usize}
                  "The job ID(s) of the job(s) to cancel")
+                (@arg FORGET: -f --forget
+                 "Remove the task from the history and garbage collect it.")
             )
 
             (@subcommand stat =>
@@ -455,11 +457,13 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("rm", Some(sub_m)) => {
+            let forget = sub_m.is_present("FORGET");
             for jid in sub_m.values_of("JID").unwrap() {
                 let response = make_request(
                     addr,
                     JobServerReq::CancelJob {
                         jid: Jid::from(jid).into(),
+                        remove: forget,
                     },
                 );
                 println!("Server response: {:#?}", response);

@@ -74,6 +74,9 @@ pub enum JobServerReq {
     CancelJob {
         /// The job ID of the job to cancel.
         jid: usize,
+
+        /// The job should be garbage collected and removed from the history.
+        remove: bool,
     },
 
     /// Get information on the status of a job.
