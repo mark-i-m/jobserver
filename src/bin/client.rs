@@ -196,6 +196,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                     (@arg RUNNING: -r --running
                      "Print the log path of all running jobs")
                 )
+                (@arg ERR: -e --error
+                 "Print the error log path.")
                 (@arg LESS: -l --less conflicts_with[TAIL]
                  "Pass the log path to `less`")
                 (@arg TAIL: -t --tail conflicts_with[LESS]
@@ -389,6 +391,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("log", Some(sub_m)) => {
+            let is_err = sub_m.is_present("ERR");
             let jids: Vec<_> = if sub_m.is_present("JID") {
                 sub_m.values_of("JID").unwrap().map(Jid::from).collect()
             } else {
@@ -406,6 +409,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             let paths: Vec<_> = jids
                 .into_iter()
                 .map(|jid| get_job_log_path(addr, jid))
+                .map(|path| if is_err { path + ".err" } else { path })
                 .collect();
 
             if sub_m.is_present("LESS") {
