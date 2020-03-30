@@ -716,6 +716,24 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
                 jid,
                 mut cmd,
                 class,
+                status: Status::Unknown { machine },
+                ..
+            } => {
+                if !is_long {
+                    cmd.truncate(TRUNC);
+                }
+                let machine = if let Some(machine) = machine {
+                    machine
+                } else {
+                    "".into()
+                };
+                table.add_row(row![b->jid, FDi->"Unknown", class, cmd, machine, ""]);
+            }
+
+            JobInfo {
+                jid,
+                mut cmd,
+                class,
                 status: Status::Canceled,
                 variables: _variables,
                 ..
@@ -904,6 +922,7 @@ fn make_matrix_csv_inner(
             job.cmd,
             job.jid.to_string(),
             match job.status {
+                Status::Unknown { .. } => "Unknown".to_owned(),
                 Status::Canceled => "Canceled".to_owned(),
                 Status::Waiting => "Waiting".to_owned(),
                 Status::Held => "Held".to_owned(),

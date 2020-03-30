@@ -224,6 +224,9 @@ pub enum Status {
         /// The error that caused the failure.
         error: String,
     },
+
+    /// The job is an unknown state (usually due to the server being killed and restarted).
+    Unknown { machine: Option<String> },
 }
 
 pub fn cmd_replace_vars(cmd: &str, vars: &HashMap<String, String>) -> String {

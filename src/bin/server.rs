@@ -21,6 +21,11 @@ use jobserver::{
 
 use log::{debug, error, info, warn};
 
+use serde::{Deserialize, Serialize};
+
+/// Then name of the file in the `log_dir` that a snapshot is stored at.
+const DUMP_FILENAME: &str = "server-snapshot.json";
+
 /// The server's state.
 #[derive(Debug)]
 struct Server {
@@ -53,14 +58,14 @@ struct Server {
     client_ping: Arc<AtomicBool>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum TaskType {
     Job,
     SetupTask,
 }
 
 /// A state machine for tasks, defining deterministically what they should do next.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 enum TaskState {
     /// This task has not yet started running.
     Waiting,
@@ -97,11 +102,14 @@ enum TaskState {
 
     /// This task was killed/canceled, but not garbage collected.
     Killed,
+
+    /// This task is in an unknown state.
+    Unknown { machine: Option<String> },
 }
 
 /// Information about a single task (a job or setup task). This is a big state machine that says
 /// what the status of the task is and has all information to do the next thing when ready.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Task {
     /// The tasks's ID.
     jid: usize,
@@ -132,7 +140,7 @@ struct Task {
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Matrix {
     /// This matrix's ID.
     id: usize,
@@ -154,7 +162,7 @@ struct Matrix {
 }
 
 /// Information about a single machine.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash, Serialize, Deserialize)]
 struct MachineStatus {
     /// The class of the machine.
     class: String,
@@ -176,6 +184,16 @@ struct JobProcessInfo {
 
     /// The filename of the stderr file.
     stderr: String,
+}
+
+/// A snapshot of the current server state to serialize to disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Snapshot {
+    machines: HashMap<String, MachineStatus>,
+    variables: HashMap<String, String>,
+    tasks: BTreeMap<usize, Task>,
+    matrices: HashMap<usize, Matrix>,
+    next_jid: usize,
 }
 
 impl Task {
@@ -202,6 +220,9 @@ impl Task {
                 error: error.clone(),
             },
             TaskState::Canceled { .. } | TaskState::Killed => Status::Canceled,
+            TaskState::Unknown { machine } => Status::Unknown {
+                machine: machine.clone(),
+            },
         }
     }
 
@@ -217,7 +238,7 @@ impl Task {
 impl Server {
     /// Creates a new server. Not listening yet.
     pub fn new(runner: String, log_dir: String) -> Self {
-        Self {
+        let mut server = Self {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(BTreeMap::new())),
@@ -226,7 +247,11 @@ impl Server {
             runner,
             log_dir,
             client_ping: Arc::new(AtomicBool::new(false)),
-        }
+        };
+
+        server.load_snapshot();
+
+        server
     }
 
     pub fn listen(&self, listen_addr: &str) {
@@ -544,7 +569,8 @@ impl Server {
                             | TaskState::CopyingResults { .. }
                             | TaskState::Finalize { .. }
                             | TaskState::Canceled { .. }
-                            | TaskState::Killed => cmds.last().unwrap(),
+                            | TaskState::Killed
+                            | TaskState::Unknown { .. } => cmds.last().unwrap(),
                         }
                         .clone();
 
@@ -791,6 +817,9 @@ impl Server {
         let mut updated = true;
 
         loop {
+            // Write out state for later (before we grab any locks).
+            self.take_snapshot();
+
             // Sleep 30s, but keep waking up to check if there is likely more work. If there is an
             // indication of potential work, do a full iteration.
             for _ in 0..30000 / 100 {
@@ -939,7 +968,10 @@ impl Server {
 
                 Self::try_drive_sm_finalize(jid, task, machines, running_job_handles, results_path)
             }
-            TaskState::Done | TaskState::DoneWithResults { .. } | TaskState::Killed => {
+            TaskState::Done
+            | TaskState::DoneWithResults { .. }
+            | TaskState::Killed
+            | TaskState::Unknown { .. } => {
                 let old = running_job_handles.remove(&jid);
 
                 // Update occured if we actually removed something.
@@ -1360,6 +1392,115 @@ impl Server {
             stdout: stdout_file_name,
             stderr: stderr_file_name,
         })
+    }
+
+    /// Attempt to write the server's state to a file.
+    fn take_snapshot(&self) {
+        let snapshot = Snapshot {
+            machines: self.machines.lock().unwrap().clone(),
+            variables: self.variables.lock().unwrap().clone(),
+            tasks: self.tasks.lock().unwrap().clone(),
+            matrices: self.matrices.lock().unwrap().clone(),
+            next_jid: self.next_jid.load(Ordering::Relaxed),
+        };
+
+        let filename = format!("{}/{}", self.log_dir, DUMP_FILENAME);
+        let snapshot_json = match serde_json::to_string(&snapshot) {
+            Ok(json) => json,
+            Err(err) => {
+                error!("Unable to serialize a snapshot: {}", err);
+                return;
+            }
+        };
+
+        match std::fs::write(&filename, snapshot_json) {
+            Ok(_) => {}
+            Err(err) => {
+                error!("Unable to write snapshot to disk: {}", err);
+                return;
+            }
+        }
+
+        info!("Wrote snapshot to {}", filename);
+    }
+
+    fn load_snapshot(&mut self) {
+        let filename = format!("{}/{}", self.log_dir, DUMP_FILENAME);
+
+        info!("Attempting to load snapshot from {}", filename);
+
+        let snapshot_json = match std::fs::read_to_string(filename) {
+            Ok(json) => json,
+            Err(err) => {
+                error!("Unable to read snapshot from disk: {}", err);
+                return;
+            }
+        };
+
+        let Snapshot {
+            machines,
+            variables,
+            tasks,
+            matrices,
+            next_jid,
+        } = match serde_json::from_str(&snapshot_json) {
+            Ok(snapshot) => snapshot,
+            Err(err) => {
+                error!("Unable to deserialize a snapshot: {}", err);
+                return;
+            }
+        };
+
+        // We free everything since we have no way to reconnect to sessions. But we do keep track
+        // of what was running so that we can report statuses well.
+        let mut was_running = BTreeMap::new();
+
+        *self.machines.lock().unwrap() = machines
+            .into_iter()
+            .map(|(machine, status)| {
+                if let Some(running) = status.running {
+                    was_running.insert(running, machine.clone());
+                }
+
+                (
+                    machine,
+                    MachineStatus {
+                        class: status.class,
+                        running: None,
+                    },
+                )
+            })
+            .collect();
+        *self.variables.lock().unwrap() = variables;
+        *self.tasks.lock().unwrap() = tasks
+            .into_iter()
+            .map(|(jid, task)| {
+                (
+                    jid,
+                    Task {
+                        canceled: None,
+                        state: match task.state {
+                            state @ TaskState::Waiting
+                            | state @ TaskState::Held
+                            | state @ TaskState::Canceled { .. }
+                            | state @ TaskState::Done
+                            | state @ TaskState::DoneWithResults { .. }
+                            | state @ TaskState::Error { .. }
+                            | state @ TaskState::Killed
+                            | state @ TaskState::Unknown { .. } => state,
+                            _ => TaskState::Unknown {
+                                machine: was_running.remove(&jid),
+                            },
+                        },
+                        ..task
+                    },
+                )
+            })
+            .collect();
+        *self.matrices.lock().unwrap() = matrices;
+        self.next_jid.store(next_jid, Ordering::Relaxed);
+
+        info!("Succeeded in loading snapshot.");
     }
 }
 
