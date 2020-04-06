@@ -147,8 +147,10 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand ls =>
                 (about: "List all jobs.")
-                (@arg LONG: --long
+                (@arg LONG: --long conflicts_with[CMD]
                  "Show all output")
+                (@arg CMD: --commands conflicts_with[LONG]
+                 "Show only job IDs and commands")
             )
 
             (@subcommand rm =>
@@ -228,8 +230,10 @@ fn build_cli() -> clap::App<'static, 'static> {
                     (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
                      "The matrix ID of the matrix")
-                    (@arg LONG: --long
+                    (@arg LONG: --long conflicts_with[CMD]
                      "Show all output")
+                    (@arg CMD: --commands conflicts_with[LONG]
+                     "Show only job IDs and commands")
                 )
 
                 (@subcommand csv =>
@@ -361,8 +365,9 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(sub_m)) => {
             let is_long = sub_m.is_present("LONG");
+            let is_cmd = sub_m.is_present("CMD");
             let jobs = list_jobs(addr);
-            print_jobs(jobs, is_long);
+            print_jobs(jobs, is_long, is_cmd);
         }
 
         ("stat", Some(sub_m)) => {
@@ -515,6 +520,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("stat", Some(sub_m)) => {
             let is_long = sub_m.is_present("LONG");
+            let is_cmd = sub_m.is_present("CMD");
 
             let response = make_request(
                 addr,
@@ -527,7 +533,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 JobServerResp::MatrixStatus { jobs, .. } => {
                     let mut jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = stat_jobs(addr, &mut jobs);
-                    print_jobs(jobs, is_long);
+                    print_jobs(jobs, is_long, is_cmd);
                 }
                 _ => println!("Server response: {:#?}", response),
             }
@@ -697,11 +703,24 @@ fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
     }
 }
 
-fn print_jobs(jobs: Vec<JobInfo>, is_long: bool) {
+fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
     // Print a nice human-readable table
     let mut table = Table::new();
 
     table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+
+    // If we only want command output...
+    if is_cmd {
+        table.set_titles(row![ Fwbu => "Job", "Command" ]);
+        for JobInfo { jid, cmd, .. } in jobs.into_iter() {
+            table.add_row(row![b->jid, cmd]);
+        }
+        table.printstd();
+
+        return;
+    }
+
+    // Full output
 
     table.set_titles(row![ Fwbu =>
         "Job", "Status", "Class", "Command", "Machine", "Output"
