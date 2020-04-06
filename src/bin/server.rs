@@ -203,8 +203,10 @@ impl Task {
             TaskState::Held => Status::Held,
             TaskState::Running(..)
             | TaskState::CheckingResults { .. }
-            | TaskState::CopyingResults { .. }
             | TaskState::Finalize { .. } => Status::Running {
+                machine: self.machine.as_ref().unwrap().clone(),
+            },
+            TaskState::CopyingResults { .. } => Status::CopyResults {
                 machine: self.machine.as_ref().unwrap().clone(),
             },
             TaskState::Done => Status::Done {

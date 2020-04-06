@@ -201,6 +201,11 @@ pub enum Status {
         machine: String,
     },
 
+    CopyResults {
+        /// The machine the job is running on.
+        machine: String,
+    },
+
     /// The job finished runnning.
     Done {
         /// The machine the job is ran on.

@@ -883,6 +883,20 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 }
                 table.add_row(row![b->jid, Fy->"Running", class, cmd, machine, ""]);
             }
+
+            JobInfo {
+                jid,
+                mut cmd,
+                class,
+                status: Status::CopyResults { machine },
+                variables: _variables,
+                ..
+            } => {
+                if !is_long {
+                    cmd.truncate(TRUNC);
+                }
+                table.add_row(row![b->jid, Fy->"Copying Result", class, cmd, machine, ""]);
+            }
         }
     }
 
@@ -973,6 +987,7 @@ fn make_matrix_csv_inner(
                 Status::Waiting => "Waiting".to_owned(),
                 Status::Held => "Held".to_owned(),
                 Status::Running { .. } => "Running".to_owned(),
+                Status::CopyResults { .. } => "Copying Results".to_owned(),
                 Status::Failed { .. } => "Failed".to_owned(),
 
                 Status::Done { output: None, .. } => "Done (no output)".to_owned(),
