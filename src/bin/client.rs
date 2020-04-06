@@ -1,6 +1,6 @@
 //! Client implmentation
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 
@@ -147,6 +147,9 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand ls =>
                 (about: "List all jobs.")
+                (@arg JID: {is_usize} ...
+                 "The job IDs of the jobs to list. Unknown job IDs are ignored. \
+                  List all jobs if omitted.")
                 (@arg LONG: --long conflicts_with[CMD]
                  "Show all output")
                 (@arg CMD: --commands conflicts_with[LONG]
@@ -230,10 +233,12 @@ fn build_cli() -> clap::App<'static, 'static> {
                     (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
                      "The matrix ID of the matrix")
-                    (@arg LONG: --long conflicts_with[CMD]
-                     "Show all output")
-                    (@arg CMD: --commands conflicts_with[LONG]
-                     "Show only job IDs and commands")
+                    (@group DISPLAY =>
+                        (@arg LONG: --long
+                         "Show all output")
+                        (@arg CMD: --commands
+                         "Show only job IDs and commands")
+                    )
                 )
 
                 (@subcommand csv =>
@@ -301,7 +306,7 @@ fn generate_completions(shell: clap::Shell, outdir: &str, bin: Option<&str>) {
 fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(_sub_m)) => {
-            let jobs = list_jobs(addr);
+            let jobs = list_jobs(addr, JobListMode::All);
             let avail = list_avail(addr, jobs);
             print_avail(avail);
         }
@@ -366,7 +371,11 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         ("ls", Some(sub_m)) => {
             let is_long = sub_m.is_present("LONG");
             let is_cmd = sub_m.is_present("CMD");
-            let jobs = list_jobs(addr);
+            let jids = sub_m
+                .values_of("JID")
+                .map(|v| JobListMode::Jids(v.map(Jid::from).collect()))
+                .unwrap_or(JobListMode::All);
+            let jobs = list_jobs(addr, jids);
             print_jobs(jobs, is_long, is_cmd);
         }
 
@@ -402,7 +411,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             let jids: Vec<_> = if sub_m.is_present("JID") {
                 sub_m.values_of("JID").unwrap().map(Jid::from).collect()
             } else {
-                list_jobs(addr)
+                list_jobs(addr, JobListMode::All)
                     .into_iter()
                     .filter_map(|job| {
                         if let Status::Running { .. } = job.status {
@@ -612,11 +621,29 @@ struct JobInfo {
     variables: HashMap<String, String>,
 }
 
-fn list_jobs(addr: &str) -> Vec<JobInfo> {
+enum JobListMode {
+    /// List all jobs.
+    All,
+
+    /// List only JIDs in the set.
+    Jids(BTreeSet<Jid>),
+}
+
+fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobInfo> {
     let job_ids = make_request(addr, JobServerReq::ListJobs);
 
     if let JobServerResp::Jobs(jids) = job_ids {
-        stat_jobs(addr, &mut jids.into_iter().map(Jid::new).collect())
+        stat_jobs(
+            addr,
+            &mut jids
+                .into_iter()
+                .map(Jid::new)
+                .filter(|j| match mode {
+                    JobListMode::All => true,
+                    JobListMode::Jids(ref jids) => jids.contains(j),
+                })
+                .collect(),
+        )
     } else {
         unreachable!();
     }
