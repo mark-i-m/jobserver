@@ -103,8 +103,13 @@ fn build_cli() -> clap::App<'static, 'static> {
             (@subcommand setup =>
                 (about: "Set up the given machine using the given command")
                 (@setting ArgRequiredElseHelp)
-                (@arg ADDR: +required
-                 "The IP:PORT of the machine")
+                (@group MACHINES =>
+                    (@attributes +required)
+                    (@arg ADDR: -m --machine +takes_value
+                     "The IP:PORT of the machine")
+                    (@arg ADDR_FILE: -f --file +takes_value
+                     "A file with one IP:PORT per line")
+                )
                 (@arg CMD: +required ...
                  "The setup commands, each as a single string")
                 (@arg CLASS: --class +takes_value
@@ -331,14 +336,31 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("setup", Some(sub_m)) => {
-            let req = JobServerReq::SetUpMachine {
-                addr: sub_m.value_of("ADDR").unwrap().into(),
-                cmds: sub_m.values_of("CMD").unwrap().map(String::from).collect(),
-                class: sub_m.value_of("CLASS").map(Into::into),
+            let machines = if let Some(addr) = sub_m.value_of("ADDR") {
+                vec![addr.into()]
+            } else if let Some(addr_file) = sub_m.value_of("ADDR_FILE") {
+                std::fs::read_to_string(addr_file)
+                    .expect("unable to read address file")
+                    .split_whitespace()
+                    .map(|line| line.trim().to_owned())
+                    .collect()
+            } else {
+                unreachable!();
             };
 
-            let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+            let cmds: Vec<_> = sub_m.values_of("CMD").unwrap().map(String::from).collect();
+            let class = sub_m.value_of("CLASS").map(Into::into);
+
+            for machine in machines.into_iter() {
+                let req = JobServerReq::SetUpMachine {
+                    addr: machine,
+                    cmds: cmds.clone(),
+                    class: class.clone(),
+                };
+
+                let response = make_request(addr, req);
+                println!("Server response: {:#?}", response);
+            }
         }
 
         _ => unreachable!(),
