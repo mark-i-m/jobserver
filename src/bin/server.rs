@@ -97,8 +97,8 @@ enum TaskState {
         results_path: String,
     },
 
-    /// This task terminated with an error.
-    Error { error: String },
+    /// This task terminated with an error. `n` represents to command index of the failed task.
+    Error { error: String, n: usize },
 
     /// This task was killed/canceled, but not garbage collected.
     Killed,
@@ -217,7 +217,7 @@ impl Task {
                 machine: self.machine.as_ref().unwrap().clone(),
                 output: Some(results_path.clone()),
             },
-            TaskState::Error { error } => Status::Failed {
+            TaskState::Error { error, .. } => Status::Failed {
                 machine: Some(self.machine.as_ref().unwrap().clone()),
                 error: error.clone(),
             },
@@ -1044,6 +1044,7 @@ impl Server {
 
                     task.update_state(TaskState::Error {
                         error: format!("Unable to start job {}: {}", jid, err),
+                        n: 0, // first cmd failed
                     });
                 }
             };
@@ -1114,6 +1115,7 @@ impl Server {
                                         idx + 1,
                                         err
                                     ),
+                                    n: idx + 1,
                                 });
                             }
                         };
@@ -1124,6 +1126,7 @@ impl Server {
                             "Task (command {}) returned failing exit code: {}",
                             idx, status
                         ),
+                        n: idx,
                     });
                 }
 
