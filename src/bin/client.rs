@@ -92,7 +92,7 @@ fn build_cli() -> clap::App<'static, 'static> {
             (@subcommand rm =>
                 (about: "Remove the given machine from the available pool.")
                 (@setting ArgRequiredElseHelp)
-                (@arg ADDR: +required
+                (@arg ADDR: +required ...
                  "The IP:PORT of the machine")
             )
 
@@ -327,12 +327,11 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("rm", Some(sub_m)) => {
-            let req = JobServerReq::RemoveAvailable {
-                addr: sub_m.value_of("ADDR").unwrap().into(),
-            };
-
-            let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+            for m in sub_m.values_of("ADDR").unwrap() {
+                let req = JobServerReq::RemoveAvailable { addr: m.into() };
+                let response = make_request(addr, req);
+                println!("Server response: {:#?}", response);
+            }
         }
 
         ("setup", Some(sub_m)) => {
