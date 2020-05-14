@@ -164,7 +164,7 @@ fn build_cli() -> clap::App<'static, 'static> {
             (@subcommand rm =>
                 (about: "Cancel a running/scheduled job OR delete a finished/failed job.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required ... {is_usize}
+                (@arg JID: +required {is_usize} ...
                  "The job ID(s) of the job(s) to cancel")
                 (@arg FORGET: -f --forget
                  "Remove the task from the history and garbage collect it.")
@@ -173,21 +173,21 @@ fn build_cli() -> clap::App<'static, 'static> {
             (@subcommand stat =>
                 (about: "Get information on the status of a job.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize}
+                (@arg JID: +required {is_usize} ...
                  "The job ID of the job")
             )
 
             (@subcommand hold =>
                 (about: "Put the job on hold.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize}
+                (@arg JID: +required {is_usize} ...
                  "The job ID of the job")
             )
 
             (@subcommand unhold =>
                 (about: "Unold the job.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize}
+                (@arg JID: +required {is_usize} ...
                  "The job ID of the job")
             )
 
@@ -401,30 +401,36 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("stat", Some(sub_m)) => {
-            let req = JobServerReq::JobStatus {
-                jid: Jid::from(sub_m.value_of("JID").unwrap()).into(),
-            };
+            for jid in sub_m.values_of("JID").unwrap() {
+                let req = JobServerReq::JobStatus {
+                    jid: Jid::from(jid).into(),
+                };
 
-            let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+                let response = make_request(addr, req);
+                println!("Server response: {:#?}", response);
+            }
         }
 
         ("hold", Some(sub_m)) => {
-            let req = JobServerReq::HoldJob {
-                jid: Jid::from(sub_m.value_of("JID").unwrap()).into(),
-            };
+            for jid in sub_m.values_of("JID").unwrap() {
+                let req = JobServerReq::HoldJob {
+                    jid: Jid::from(jid).into(),
+                };
 
-            let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+                let response = make_request(addr, req);
+                println!("Server response: {:#?}", response);
+            }
         }
 
         ("unhold", Some(sub_m)) => {
-            let req = JobServerReq::UnholdJob {
-                jid: Jid::from(sub_m.value_of("JID").unwrap()).into(),
-            };
+            for jid in sub_m.values_of("JID").unwrap() {
+                let req = JobServerReq::UnholdJob {
+                    jid: Jid::from(jid).into(),
+                };
 
-            let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+                let response = make_request(addr, req);
+                println!("Server response: {:#?}", response);
+            }
         }
 
         ("log", Some(sub_m)) => {
