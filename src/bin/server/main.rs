@@ -30,6 +30,8 @@ use prost::Message;
 
 use serde::{Deserialize, Serialize};
 
+mod snapshot;
+
 /// Then name of the file in the `log_dir` that a snapshot is stored at.
 const DUMP_FILENAME: &str = "server-snapshot.json";
 
