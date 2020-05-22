@@ -9,19 +9,24 @@ use std::os::unix::process::CommandExt;
 
 use clap::clap_app;
 
-use jobserver::{JobServerReq, JobServerResp, Status, SERVER_ADDR};
+use jobserver::{
+    protocol::{self, request::RequestType::*, response::ResponseType::*},
+    SERVER_ADDR,
+};
 
 use prettytable::{cell, row, Table};
 
+use prost::Message;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Jid(usize);
+struct Jid(u64);
 
 impl Jid {
-    fn new(jid: usize) -> Self {
+    fn new(jid: u64) -> Self {
         Jid(jid)
     }
 
-    fn jid(self) -> usize {
+    fn jid(self) -> u64 {
         self.0
     }
 }
@@ -32,7 +37,7 @@ impl<S: AsRef<str>> From<S> for Jid {
     }
 }
 
-impl From<Jid> for usize {
+impl From<Jid> for u64 {
     fn from(jid: Jid) -> Self {
         jid.0
     }
@@ -41,6 +46,114 @@ impl From<Jid> for usize {
 impl std::fmt::Display for Jid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+/// A more idiomatic version of `protocol::Status`.
+pub enum Status {
+    /// The job is waiting to run.
+    Waiting,
+
+    /// The job is currently running.
+    Running {
+        /// The machine the job is running on.
+        machine: String,
+    },
+
+    CopyResults {
+        /// The machine the job is running on.
+        machine: String,
+    },
+
+    /// The job finished runnning.
+    Done {
+        /// The machine the job is ran on.
+        machine: String,
+
+        /// The name of the output files, if any.
+        output: Option<String>,
+    },
+
+    /// Held.
+    Held,
+
+    /// The job was canceled.
+    Canceled,
+
+    /// The job produced an error.
+    Failed {
+        /// The machine where the job was running when the failure occured, if any.
+        machine: Option<String>,
+
+        /// The error that caused the failure.
+        error: String,
+    },
+
+    /// The job is an unknown state (usually due to the server being killed and restarted).
+    Unknown { machine: Option<String> },
+}
+
+impl From<protocol::Status> for Status {
+    fn from(status: protocol::Status) -> Self {
+        match status.status {
+            0 => Status::Unknown {
+                machine: if let Some(protocol::status::Machineopt::Machine(machine)) =
+                    status.machineopt
+                {
+                    Some(machine)
+                } else {
+                    None
+                },
+            },
+
+            1 => Status::Waiting,
+
+            2 => {
+                let protocol::status::Machineopt::Machine(machine) = status.machineopt.unwrap();
+                Status::Running { machine }
+            }
+
+            3 => {
+                let protocol::status::Machineopt::Machine(machine) = status.machineopt.unwrap();
+                Status::CopyResults { machine }
+            }
+
+            4 => {
+                let protocol::status::Machineopt::Machine(machine) = status.machineopt.unwrap();
+
+                Status::Done {
+                    machine,
+                    output: if let Some(protocol::status::Outputopt::Output(output)) =
+                        status.outputopt
+                    {
+                        Some(output)
+                    } else {
+                        None
+                    },
+                }
+            }
+
+            5 => Status::Held,
+
+            6 => Status::Canceled,
+
+            7 => {
+                let protocol::status::Erroropt::Error(error) = status.erroropt.unwrap();
+
+                Status::Failed {
+                    machine: if let Some(protocol::status::Machineopt::Machine(machine)) =
+                        status.machineopt
+                    {
+                        Some(machine)
+                    } else {
+                        None
+                    },
+                    error,
+                }
+            }
+
+            _ => Status::Unknown { machine: None },
+        }
     }
 }
 
@@ -271,7 +384,7 @@ fn main() {
 fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ping", _) => {
-            let response = make_request(addr, JobServerReq::Ping);
+            let response = make_request(addr, Preq(protocol::PingRequest {}));
             println!("Server response: {:#?}", response);
         }
 
@@ -317,10 +430,10 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("add", Some(sub_m)) => {
-            let req = JobServerReq::MakeAvailable {
+            let req = Mareq(protocol::MakeAvailableRequest {
                 addr: sub_m.value_of("ADDR").unwrap().into(),
                 class: sub_m.value_of("CLASS").unwrap().into(),
-            };
+            });
 
             let response = make_request(addr, req);
             println!("Server response: {:#?}", response);
@@ -328,7 +441,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("rm", Some(sub_m)) => {
             for m in sub_m.values_of("ADDR").unwrap() {
-                let req = JobServerReq::RemoveAvailable { addr: m.into() };
+                let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
                 let response = make_request(addr, req);
                 println!("Server response: {:#?}", response);
             }
@@ -348,14 +461,16 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             };
 
             let cmds: Vec<_> = sub_m.values_of("CMD").unwrap().map(String::from).collect();
-            let class = sub_m.value_of("CLASS").map(Into::into);
+            let class = sub_m
+                .value_of("CLASS")
+                .map(|s| protocol::set_up_machine_request::Classopt::Class(s.into()));
 
             for machine in machines.into_iter() {
-                let req = JobServerReq::SetUpMachine {
+                let req = Sumreq(protocol::SetUpMachineRequest {
                     addr: machine,
                     cmds: cmds.clone(),
-                    class: class.clone(),
-                };
+                    classopt: class.clone(),
+                });
 
                 let response = make_request(addr, req);
                 println!("Server response: {:#?}", response);
@@ -369,15 +484,15 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 fn handle_var_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(_sub_m)) => {
-            let response = make_request(addr, JobServerReq::ListVars);
+            let response = make_request(addr, Lvreq(protocol::ListVarsRequest {}));
             println!("Server response: {:#?}", response);
         }
 
         ("set", Some(sub_m)) => {
-            let req = JobServerReq::SetVar {
+            let req = Svreq(protocol::SetVarRequest {
                 name: sub_m.value_of("NAME").unwrap().into(),
                 value: sub_m.value_of("VALUE").unwrap().into(),
-            };
+            });
 
             let response = make_request(addr, req);
             println!("Server response: {:#?}", response);
@@ -402,9 +517,9 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("stat", Some(sub_m)) => {
             for jid in sub_m.values_of("JID").unwrap() {
-                let req = JobServerReq::JobStatus {
+                let req = Jsreq(protocol::JobStatusRequest {
                     jid: Jid::from(jid).into(),
-                };
+                });
 
                 let response = make_request(addr, req);
                 println!("Server response: {:#?}", response);
@@ -413,9 +528,9 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("hold", Some(sub_m)) => {
             for jid in sub_m.values_of("JID").unwrap() {
-                let req = JobServerReq::HoldJob {
+                let req = Hjreq(protocol::HoldJobRequest {
                     jid: Jid::from(jid).into(),
-                };
+                });
 
                 let response = make_request(addr, req);
                 println!("Server response: {:#?}", response);
@@ -424,9 +539,9 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("unhold", Some(sub_m)) => {
             for jid in sub_m.values_of("JID").unwrap() {
-                let req = JobServerReq::UnholdJob {
+                let req = Ujreq(protocol::UnholdJobRequest {
                     jid: Jid::from(jid).into(),
-                };
+                });
 
                 let response = make_request(addr, req);
                 println!("Server response: {:#?}", response);
@@ -487,11 +602,13 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("add", Some(sub_m)) => {
-            let req = JobServerReq::AddJob {
+            let req = Ajreq(protocol::AddJobRequest {
                 class: sub_m.value_of("CLASS").unwrap().into(),
                 cmd: sub_m.value_of("CMD").unwrap().into(),
-                cp_results: sub_m.value_of("CP_PATH").map(Into::into),
-            };
+                cp_resultsopt: sub_m
+                    .value_of("CP_PATH")
+                    .map(|s| protocol::add_job_request::CpResultsopt::CpResults(s.into())),
+            });
 
             let response = make_request(addr, req);
             println!("Server response: {:#?}", response);
@@ -502,10 +619,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             for jid in sub_m.values_of("JID").unwrap() {
                 let response = make_request(
                     addr,
-                    JobServerReq::CancelJob {
+                    Cjreq(protocol::CancelJobRequest {
                         jid: Jid::from(jid).into(),
                         remove: forget,
-                    },
+                    }),
                 );
                 println!("Server response: {:#?}", response);
             }
@@ -515,9 +632,9 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             for jid in sub_m.values_of("JID").unwrap() {
                 let response = make_request(
                     addr,
-                    JobServerReq::CloneJob {
+                    Cljreq(protocol::CloneJobRequest {
                         jid: Jid::from(jid).into(),
-                    },
+                    }),
                 );
                 println!("Server response: {:#?}", response);
             }
@@ -532,23 +649,26 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("add", Some(sub_m)) => {
-            let req = JobServerReq::AddMatrix {
+            let req = Amreq(protocol::AddMatrixRequest {
                 vars: sub_m
                     .values_of("VARIABLES")
                     .map(|vals| {
                         vals.map(|val| {
                             let spli = val.find("=").expect("Variables: KEY=VALUE1,VALUE2,...");
                             let (key, values) = val.split_at(spli);
-                            let values = values[1..].split(",").map(|s| s.to_string()).collect();
-                            (key.to_owned(), values)
+                            let values: Vec<_> =
+                                values[1..].split(",").map(|s| s.to_string()).collect();
+                            (key.to_owned(), (&values).into())
                         })
                         .collect()
                     })
                     .unwrap_or_else(|| HashMap::new()),
                 class: sub_m.value_of("CLASS").unwrap().into(),
                 cmd: sub_m.value_of("CMD").unwrap().into(),
-                cp_results: sub_m.value_of("CP_PATH").map(Into::into),
-            };
+                cp_resultsopt: sub_m
+                    .value_of("CP_PATH")
+                    .map(|s| protocol::add_matrix_request::CpResultsopt::CpResults(s.into())),
+            });
 
             let response = make_request(addr, req);
             println!("Server response: {:#?}", response);
@@ -560,13 +680,13 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
             let response = make_request(
                 addr,
-                JobServerReq::StatMatrix {
+                Smreq(protocol::StatMatrixRequest {
                     id: sub_m.value_of("ID").unwrap().parse().unwrap(),
-                },
+                }),
             );
 
             match response {
-                JobServerResp::MatrixStatus { jobs, .. } => {
+                Msresp(protocol::MatrixStatusResp { jobs, .. }) => {
                     let mut jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = stat_jobs(addr, &mut jobs);
                     print_jobs(jobs, is_long, is_cmd);
@@ -578,21 +698,20 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         ("csv", Some(sub_m)) => {
             let response = make_request(
                 addr,
-                JobServerReq::StatMatrix {
+                Smreq(protocol::StatMatrixRequest {
                     id: sub_m.value_of("ID").unwrap().parse().unwrap(),
-                },
+                }),
             );
 
             let file = sub_m.value_of("FILE").unwrap();
 
             match response {
-                JobServerResp::MatrixStatus {
+                Msresp(protocol::MatrixStatusResp {
                     jobs,
-                    cp_results: _cp_results,
                     id,
                     variables,
                     ..
-                } => {
+                }) => {
                     let mut jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = stat_jobs(addr, &mut jobs);
                     make_matrix_csv(file, id, variables, jobs);
@@ -606,24 +725,30 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 }
 
 fn get_job_log_path(addr: &str, jid: Jid) -> String {
-    let req = JobServerReq::JobStatus { jid: jid.into() };
-
-    let status = make_request(addr, req);
+    let status = make_request(addr, Jsreq(protocol::JobStatusRequest { jid: jid.jid() }));
 
     match status {
-        JobServerResp::JobStatus { log, .. } => log,
+        Jsresp(protocol::JobStatusResp { log, .. }) => log,
         resp => format!("{:#?}", resp),
     }
 }
 
-fn make_request(server_addr: &str, request: JobServerReq) -> JobServerResp {
+fn make_request(
+    server_addr: &str,
+    request_ty: protocol::request::RequestType,
+) -> protocol::response::ResponseType {
     // Connect to server
     let mut tcp_stream = TcpStream::connect(server_addr).expect("Unable to connect to server");
 
     // Send request
-    let request = serde_json::to_string(&request).expect("Unable to serialize message");
+    let mut request = protocol::Request::default();
+    request.request_type = Some(request_ty);
+    let mut bytes = vec![];
+    request
+        .encode(&mut bytes)
+        .expect("Unable to serialize message");
     tcp_stream
-        .write_all(request.as_bytes())
+        .write_all(&bytes)
         .expect("Unable to send message to server");
 
     // Send EOF
@@ -632,12 +757,15 @@ fn make_request(server_addr: &str, request: JobServerReq) -> JobServerResp {
         .expect("Unable to send EOF to server");
 
     // Wait for response.
-    let mut response = String::new();
+    let mut response = Vec::new();
     tcp_stream
-        .read_to_string(&mut response)
+        .read_to_end(&mut response)
         .expect("Unable to read server response");
 
-    serde_json::from_str(&response).expect("Unable to deserialize server response")
+    protocol::Response::decode(response.as_slice())
+        .expect("Unable to deserialize server response")
+        .response_type
+        .expect("Response is unexpectedly empty.")
 }
 
 struct JobInfo {
@@ -657,12 +785,12 @@ enum JobListMode {
 }
 
 fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobInfo> {
-    let job_ids = make_request(addr, JobServerReq::ListJobs);
+    let job_ids = make_request(addr, Ljreq(protocol::ListJobsRequest {}));
 
-    if let JobServerResp::Jobs(jids) = job_ids {
+    if let Jresp(protocol::JobsResp { jobs }) = job_ids {
         stat_jobs(
             addr,
-            &mut jids
+            &mut jobs
                 .into_iter()
                 .map(Jid::new)
                 .filter(|j| match mode {
@@ -682,17 +810,18 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
 
     jids.iter()
         .filter_map(|jid| {
-            let status = make_request(addr, JobServerReq::JobStatus { jid: jid.jid() });
+            let status = make_request(addr, Jsreq(protocol::JobStatusRequest { jid: jid.jid() }));
 
-            if let JobServerResp::JobStatus {
+            if let Jsresp(protocol::JobStatusResp {
                 class,
                 cmd,
                 jid,
                 status,
                 variables,
                 ..
-            } = status
+            }) = status
             {
+                let status = Status::from(status.expect("Status is unexpectedly missing"));
                 Some(JobInfo {
                     class,
                     cmd,
@@ -711,11 +840,11 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
 struct MachineInfo {
     addr: String,
     class: String,
-    running: Option<usize>,
+    running: Option<u64>,
 }
 
 fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
-    let avail = make_request(addr, JobServerReq::ListAvailable);
+    let avail = make_request(addr, Lareq(protocol::ListAvailableRequest {}));
 
     // Find out which jobs are running
     let mut running_jobs = HashMap::new();
@@ -734,7 +863,7 @@ fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
         }
     }
 
-    if let JobServerResp::Machines(machines) = avail {
+    if let Mresp(protocol::MachinesResp { machines }) = avail {
         let mut avail: Vec<_> = machines
             .into_iter()
             .map(|(machine, class)| {
@@ -970,8 +1099,8 @@ fn print_avail(machines: Vec<MachineInfo>) {
 
 fn make_matrix_csv(
     file: &str,
-    id: usize,
-    variables: HashMap<String, Vec<String>>,
+    id: u64,
+    variables: HashMap<String, protocol::MatrixVarValues>,
     jobs: Vec<JobInfo>,
 ) {
     match make_matrix_csv_inner(file, id, variables, jobs) {
@@ -982,8 +1111,8 @@ fn make_matrix_csv(
 
 fn make_matrix_csv_inner(
     file: &str,
-    id: usize,
-    variables: HashMap<String, Vec<String>>,
+    id: u64,
+    variables: HashMap<String, protocol::MatrixVarValues>,
     jobs: Vec<JobInfo>,
 ) -> Result<(), failure::Error> {
     let mut csvw = csv::WriterBuilder::new()

@@ -1,0 +1,302 @@
+syntax = "proto3";
+package jobserver_proto;
+
+// Message from client to server.
+message Request {
+    oneof request_type {
+        PingRequest preq = 1;
+        MakeAvailableRequest mareq = 2;
+        RemoveAvailableRequest rareq = 3;
+        ListAvailableRequest lareq = 4;
+        SetUpMachineRequest sumreq = 5;
+        SetVarRequest svreq = 6;
+        ListVarsRequest lvreq = 7;
+        AddJobRequest ajreq = 8;
+        ListJobsRequest ljreq = 9;
+        CancelJobRequest cjreq = 10;
+        JobStatusRequest jsreq = 11;
+        CloneJobRequest cljreq = 12;
+        HoldJobRequest hjreq = 13;
+        UnholdJobRequest ujreq = 14;
+        AddMatrixRequest  amreq = 15;
+        StatMatrixRequest smreq = 16;
+    }
+}
+
+// Response to a `Request`.
+message Response {
+    oneof response_type {
+        OkResp okresp = 1;
+        MachinesResp mresp = 2;
+        JobsResp jresp = 3;
+        VarsResp vresp = 4;
+        JobIdResp jiresp = 5;
+        MatrixIdResp miresp = 6;
+        JobStatusResp jsresp = 7;
+        MatrixStatusResp msresp = 8;
+        NoSuchMachineResp nsmresp = 9;
+        NoSuchJobResp nsjresp = 10;
+        NoSuchMatrixResp nsmatresp = 11;
+        NotWaitingResp nwresp = 12;
+    }
+}
+
+// Used for debugging.
+message PingRequest { }
+
+// Add the given machine to the list of available machines
+message MakeAvailableRequest {
+    // The IP:PORT of the machine.
+    string addr = 1;
+
+    // The class of the machine.
+    string class = 2;
+}
+
+// Remove the given machine from the list of available machines
+message RemoveAvailableRequest {
+    // The IP:PORT of the machine.
+    string addr = 1;
+}
+
+// List the available machines known to the server.
+message ListAvailableRequest { }
+
+// Set up a machine and optionally make it available in the given class.
+message SetUpMachineRequest {
+    // The IP:PORT of the machine.
+    string addr = 1;
+
+    // The class of the machine.
+    oneof classopt {
+        string class = 2;
+    };
+
+    // The setup commands to execute in order.
+    //
+    // The commands may use any existing variables known to the server.
+    repeated string cmds = 3;
+}
+
+// Set the value of a variable.
+message SetVarRequest { 
+    string name = 1;
+    string value = 2;
+}
+
+// List all set variables and their values.
+message ListVarsRequest { }
+
+// Add a job to be run on the given class of machine.
+message AddJobRequest {
+    // The class of machine allowed to run this job.
+    string class = 1;
+
+    // The command of the job.
+    //
+    // The command may use any existing variables known to the server.
+    string cmd = 2;
+
+    // The location to copy results, if any.
+    oneof cp_resultsopt {
+        string cp_results = 3;
+    }
+}
+
+// Get a list of job IDs.
+message ListJobsRequest { }
+
+// Cancel a running or scheduled job.
+message CancelJobRequest {
+    // The job ID of the job to cancel.
+    uint64 jid = 1;
+
+    // The job should be garbage collected and removed from the history.
+    bool remove = 2;
+}
+
+// Get information on the status of a job.
+message JobStatusRequest {
+    // The job ID of the job.
+    uint64 jid = 1;
+}
+
+// Clone a running or scheduled job. That is, create a new job with the same properties as the
+// given job.
+message CloneJobRequest {
+    // The job ID of the job to cancel.
+    uint64 jid = 1;
+}
+
+// Put a job on hold.
+message HoldJobRequest {
+    // The job ID of the job to hold.
+    uint64 jid = 1;
+}
+
+// Unhold a job on hold.
+message UnholdJobRequest {
+    // The job ID of the job to unhold.
+    uint64 jid = 1;
+}
+
+// Start a matrix with the given variables and command template.
+message AddMatrixRequest {
+    // The variables and their values, which we take the Cartesian Product over.
+    map<string, MatrixVarValues> vars = 1;
+
+    // The command of the job.
+    //
+    // The command may use any existing variables known to the server and variables from the
+    // set above.
+    string cmd = 2;
+
+    // The class of machine allowed to run this job.
+    string class = 3;
+
+    // The location to copy results, if any.
+    oneof cp_resultsopt {
+        string cp_results = 4;
+    }
+}
+
+message StatMatrixRequest {
+    // The ID of the matrix.
+    uint64 id = 1;
+}
+
+message MatrixVarValues {
+    repeated string values = 1;
+}
+
+// Succeeded. No return value.
+message OkResp { }
+
+// Succeeded. A list of available machines and their classes.
+message MachinesResp {
+    map<string, string> machines = 1;
+}
+
+// A list of job IDs.
+message JobsResp {
+    repeated uint64 jobs = 1;
+}
+
+// A list of variables and their values.
+message VarsResp {
+    map<string, string> vars = 1;
+}
+
+// Succeeded. The job ID of a created job.
+message JobIdResp {
+    uint64 jid = 1;
+}
+
+// Succeeded. The matrix ID of a created matrix.
+message MatrixIdResp {
+    uint64 id = 1;
+}
+
+// Succeeded. The status of a job.
+message JobStatusResp {
+    string class = 1;
+    string cmd = 2;
+    uint64 jid = 3;
+    Status status = 4;
+    map<string, string> variables = 5;
+    // The path to the job log. This will be `/dev/null` if the job has not started yet.
+    string log = 6;
+}
+
+// Succeeded. The status of a matrix.
+message MatrixStatusResp {
+    // The command template.
+    string cmd = 1;
+
+    // The class of machine allowed to run this job.
+    string class = 2;
+
+    // The location to copy results, if any.
+    oneof cp_resultsopt {
+        string cp_results = 3;
+    }
+
+    // The matrix ID
+    uint64 id = 4;
+
+    // The job IDs that comprise the matrix.
+    repeated uint64 jobs = 5;
+
+    // The variables in the matrix
+    map<string, MatrixVarValues> variables = 6;
+}
+
+// Error. The requested machine does not exist.
+message NoSuchMachineResp { }
+
+// Error. No such job.
+message NoSuchJobResp { }
+
+// Error. No such matrix.
+message NoSuchMatrixResp { }
+
+// Error. The job we tried to hold is not waiting (i.e. already running or done) or the job we
+// tried to unhold was not held.
+message NotWaitingResp { }
+
+// The status of a job.
+message Status {
+    enum Status {
+        // The job is an unknown state (usually due to the server being killed and restarted).
+        UNKNOWN = 0;
+
+        // The job is waiting to run.
+        WAITING = 1;
+
+        // The job is currently running.
+        RUNNING = 2;
+
+        // Copying results after the finished running successfully.
+        COPYRESULTS = 3;
+
+        // The job finished runnning.
+        DONE = 4;
+
+        // Held.
+        HELD = 5;
+
+        // The job was canceled.
+        CANCELED = 6;
+
+        // The job produced an error.
+        FAILED = 7;
+    }
+
+    Status status = 1;
+
+    // The machine this job was scheduled on.
+    //
+    // Required for:
+    // - Running
+    // - CopyResults
+    // - Done
+    // - Failed (if possible)
+    // - Unknown (if possible)
+    oneof machineopt {
+        string machine = 2;
+    }
+
+    // The name of the output files, if any.
+    //
+    // Required for `Done` (if possible)
+    oneof outputopt {
+        string output = 3;
+    }
+
+    // The error that caused the failure.
+    //
+    // Required for `Failed`
+    oneof erroropt {
+        string error = 4;
+    }
+}

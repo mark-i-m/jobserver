@@ -7,7 +7,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
@@ -15,11 +15,18 @@ use std::time::Duration;
 use clap::clap_app;
 
 use jobserver::{
-    cmd_replace_machine, cmd_replace_vars, cmd_to_path, JobServerReq, JobServerResp, Status,
+    cmd_replace_machine, cmd_replace_vars, cmd_to_path,
+    protocol::{
+        self,
+        request::RequestType::{self, *},
+        response::ResponseType::{self, *},
+    },
     SERVER_ADDR,
 };
 
 use log::{debug, error, info, warn};
+
+use prost::Message;
 
 use serde::{Deserialize, Serialize};
 
@@ -39,13 +46,13 @@ struct Server {
     variables: Arc<Mutex<HashMap<String, String>>>,
 
     /// Information about queued tasks, by job ID.
-    tasks: Arc<Mutex<BTreeMap<usize, Task>>>,
+    tasks: Arc<Mutex<BTreeMap<u64, Task>>>,
 
     /// Information about matrices, by ID.
-    matrices: Arc<Mutex<HashMap<usize, Matrix>>>,
+    matrices: Arc<Mutex<HashMap<u64, Matrix>>>,
 
     /// The next job ID to be assigned.
-    next_jid: AtomicUsize,
+    next_jid: AtomicU64,
 
     /// The path to the runner. Never changes.
     runner: String,
@@ -112,7 +119,7 @@ enum TaskState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Task {
     /// The tasks's ID.
-    jid: usize,
+    jid: u64,
 
     /// The type of the task (a job or setup task).
     ty: TaskType,
@@ -143,7 +150,7 @@ struct Task {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Matrix {
     /// This matrix's ID.
-    id: usize,
+    id: u64,
 
     /// The command (without replacements).
     cmd: String,
@@ -158,7 +165,7 @@ struct Matrix {
     variables: HashMap<String, Vec<String>>,
 
     /// A list of jobs in this matrix.
-    jids: Vec<usize>,
+    jids: Vec<u64>,
 }
 
 /// Information about a single machine.
@@ -168,7 +175,7 @@ struct MachineStatus {
     class: String,
 
     /// What job it is running, if any.
-    running: Option<usize>,
+    running: Option<u64>,
 }
 
 /// Information about a job run by the server.
@@ -191,41 +198,95 @@ struct JobProcessInfo {
 struct Snapshot {
     machines: HashMap<String, MachineStatus>,
     variables: HashMap<String, String>,
-    tasks: BTreeMap<usize, Task>,
-    matrices: HashMap<usize, Matrix>,
-    next_jid: usize,
+    tasks: BTreeMap<u64, Task>,
+    matrices: HashMap<u64, Matrix>,
+    next_jid: u64,
 }
 
 impl Task {
-    pub fn status(&self) -> Status {
+    pub fn status(&self) -> protocol::Status {
+        use protocol::status::{Erroropt::Error, Machineopt::Machine, Outputopt::Output};
+
+        let mut status = protocol::Status::default();
+
+        // Set the state
         match &self.state {
-            TaskState::Waiting => Status::Waiting,
-            TaskState::Held => Status::Held,
+            TaskState::Waiting => {
+                status.status = protocol::status::Status::Waiting.into();
+            }
+
+            TaskState::Held => {
+                status.status = protocol::status::Status::Held.into();
+            }
+
             TaskState::Running(..)
             | TaskState::CheckingResults { .. }
-            | TaskState::Finalize { .. } => Status::Running {
-                machine: self.machine.as_ref().unwrap().clone(),
-            },
-            TaskState::CopyingResults { .. } => Status::CopyResults {
-                machine: self.machine.as_ref().unwrap().clone(),
-            },
-            TaskState::Done => Status::Done {
-                machine: self.machine.as_ref().unwrap().clone(),
-                output: None,
-            },
-            TaskState::DoneWithResults { results_path } => Status::Done {
-                machine: self.machine.as_ref().unwrap().clone(),
-                output: Some(results_path.clone()),
-            },
-            TaskState::Error { error, .. } => Status::Failed {
-                machine: Some(self.machine.as_ref().unwrap().clone()),
-                error: error.clone(),
-            },
-            TaskState::Canceled { .. } | TaskState::Killed => Status::Canceled,
-            TaskState::Unknown { machine } => Status::Unknown {
-                machine: machine.clone(),
-            },
+            | TaskState::Finalize { .. } => {
+                status.status = protocol::status::Status::Running.into();
+            }
+
+            TaskState::CopyingResults { .. } => {
+                status.status = protocol::status::Status::Copyresults.into();
+            }
+
+            TaskState::Done | TaskState::DoneWithResults { .. } => {
+                status.status = protocol::status::Status::Done.into();
+            }
+
+            TaskState::Error { .. } => {
+                status.status = protocol::status::Status::Failed.into();
+            }
+
+            TaskState::Canceled { .. } | TaskState::Killed => {
+                status.status = protocol::status::Status::Canceled.into();
+            }
+
+            TaskState::Unknown { .. } => {
+                status.status = protocol::status::Status::Unknown.into();
+            }
         }
+
+        // Set the machine
+        match &self.state {
+            TaskState::Running(..)
+            | TaskState::CheckingResults { .. }
+            | TaskState::Finalize { .. }
+            | TaskState::CopyingResults { .. }
+            | TaskState::Done
+            | TaskState::DoneWithResults { .. } => {
+                status.machineopt = Some(Machine(self.machine.as_ref().unwrap().clone()));
+            }
+
+            TaskState::Error { .. } => {
+                status.machineopt = Some(Machine(self.machine.as_ref().unwrap().clone()));
+            }
+
+            TaskState::Unknown { machine } => {
+                status.machineopt = machine.clone().map(|m| Machine(m));
+            }
+
+            _ => {}
+        }
+
+        // Set the output
+        match &self.state {
+            TaskState::DoneWithResults { results_path } => {
+                status.outputopt = Some(Output(results_path.clone()));
+            }
+
+            _ => {}
+        }
+
+        // Set the error
+        match &self.state {
+            TaskState::Error { error, .. } => {
+                status.erroropt = Some(Error(error.clone()));
+            }
+
+            _ => {}
+        }
+
+        status
     }
 
     pub fn update_state(&mut self, new: TaskState) {
@@ -245,7 +306,7 @@ impl Server {
             variables: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(BTreeMap::new())),
             matrices: Arc::new(Mutex::new(HashMap::new())),
-            next_jid: AtomicUsize::new(0),
+            next_jid: AtomicU64::new(0),
             runner,
             log_dir,
             client_ping: Arc::new(AtomicBool::new(false)),
@@ -287,33 +348,44 @@ impl Server {
         let peer_addr = client.peer_addr()?;
         info!("Handling request from {}", peer_addr);
 
-        let mut request = String::new();
-        client.read_to_string(&mut request)?;
+        let mut request = Vec::new();
+        client.read_to_end(&mut request)?;
 
-        let request: JobServerReq = serde_json::from_str(&request)?;
+        let request = protocol::Request::decode(request.as_slice())?;
 
         info!("(request) {}: {:?}", peer_addr, request);
 
         client.shutdown(Shutdown::Read)?;
 
-        let response = self.handle_request(request)?;
+        let request = match request.request_type {
+            Some(request) => request,
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Request was unexpectedly empty.",
+                ))
+            }
+        };
 
-        info!("(response) {}: {:?}", peer_addr, response);
+        let response_ty = self.handle_request(request)?;
 
-        let response = serde_json::to_string(&response)?;
+        info!("(response) {}: {:?}", peer_addr, response_ty);
 
-        client.write_all(response.as_bytes())?;
+        let mut response = protocol::Response::default();
+        response.response_type = Some(response_ty);
+        let mut bytes = vec![];
+        response.encode(&mut bytes)?;
+
+        client.write_all(&bytes)?;
 
         Ok(())
     }
 
-    fn handle_request(&self, request: JobServerReq) -> std::io::Result<JobServerResp> {
-        use JobServerReq::*;
-
+    fn handle_request(&self, request: RequestType) -> std::io::Result<ResponseType> {
         let response = match request {
-            Ping => JobServerResp::Ok,
+            Preq(protocol::PingRequest {}) => Okresp(protocol::OkResp {}),
 
-            MakeAvailable { addr, class } => {
+            Mareq(protocol::MakeAvailableRequest { addr, class }) => {
                 let mut locked = self.machines.lock().unwrap();
 
                 // Check if the machine is already there, since it may be running a job.
@@ -345,10 +417,10 @@ impl Server {
                 );
 
                 // Respond
-                JobServerResp::Ok
+                Okresp(protocol::OkResp {})
             }
 
-            RemoveAvailable { addr } => {
+            Rareq(protocol::RemoveAvailableRequest { addr }) => {
                 if let Some(old_class) = self.machines.lock().unwrap().remove(&addr) {
                     info!("Removed machine {}/{}", addr, old_class.class);
 
@@ -357,25 +429,32 @@ impl Server {
                         self.cancel_job(running, false);
                     }
 
-                    JobServerResp::Ok
+                    Okresp(protocol::OkResp {})
                 } else {
                     error!("No such machine: {}", addr);
-                    JobServerResp::NoSuchMachine
+                    Nsmresp(protocol::NoSuchMachineResp {})
                 }
             }
 
-            ListAvailable => JobServerResp::Machines(
-                self.machines
+            Lareq(protocol::ListAvailableRequest {}) => Mresp(protocol::MachinesResp {
+                machines: self
+                    .machines
                     .lock()
                     .unwrap()
                     .iter()
                     .map(|(addr, info)| (addr.clone(), info.class.clone()))
                     .collect(),
-            ),
+            }),
 
-            ListVars => JobServerResp::Vars(self.variables.lock().unwrap().clone()),
+            Lvreq(protocol::ListVarsRequest {}) => Vresp(protocol::VarsResp {
+                vars: self.variables.lock().unwrap().clone(),
+            }),
 
-            SetUpMachine { addr, class, cmds } => {
+            Sumreq(protocol::SetUpMachineRequest {
+                addr,
+                classopt,
+                cmds,
+            }) => {
                 let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
                 info!(
@@ -384,6 +463,8 @@ impl Server {
                 );
 
                 let variables = self.variables.lock().unwrap().clone();
+                let class =
+                    classopt.map(|protocol::set_up_machine_request::Classopt::Class(class)| class);
 
                 self.tasks.lock().unwrap().insert(
                     jid,
@@ -400,10 +481,10 @@ impl Server {
                     },
                 );
 
-                JobServerResp::JobId(jid)
+                Jiresp(protocol::JobIdResp { jid })
             }
 
-            SetVar { name, value } => {
+            Svreq(protocol::SetVarRequest { name, value }) => {
                 let old = self
                     .variables
                     .lock()
@@ -420,19 +501,21 @@ impl Server {
                 }
 
                 // Respond
-                JobServerResp::Ok
+                Okresp(protocol::OkResp {})
             }
 
-            AddJob {
+            Ajreq(protocol::AddJobRequest {
                 class,
                 cmd,
-                cp_results,
-            } => {
+                cp_resultsopt,
+            }) => {
                 let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
                 info!("Added job {} with class {}: {}", jid, class, cmd);
 
                 let variables = self.variables.lock().unwrap().clone();
+                let cp_results =
+                    cp_resultsopt.map(|protocol::add_job_request::CpResultsopt::CpResults(s)| s);
 
                 self.tasks.lock().unwrap().insert(
                     jid,
@@ -449,16 +532,16 @@ impl Server {
                     },
                 );
 
-                JobServerResp::JobId(jid)
+                Jiresp(protocol::JobIdResp { jid })
             }
 
-            ListJobs => {
+            Ljreq(protocol::ListJobsRequest {}) => {
                 let tasks: Vec<_> = self.tasks.lock().unwrap().keys().map(|&k| k).collect();
-                JobServerResp::Jobs(tasks)
+                Jresp(protocol::JobsResp { jobs: tasks })
                 // drop locks
             }
 
-            HoldJob { jid } => {
+            Hjreq(protocol::HoldJobRequest { jid }) => {
                 let mut locked_tasks = self.tasks.lock().unwrap();
                 let task = locked_tasks.get_mut(&jid);
 
@@ -471,21 +554,21 @@ impl Server {
 
                         if is_waiting {
                             task.state = TaskState::Held;
-                            JobServerResp::Ok
+                            Okresp(protocol::OkResp {})
                         } else {
                             error!(
                                 "Attempted to put task {} on hold, but current state is {:?}",
                                 jid, task.state
                             );
-                            JobServerResp::NotWaiting
+                            Nwresp(protocol::NotWaitingResp {})
                         }
                     }
 
-                    None => JobServerResp::NoSuchJob,
+                    None => Nsjresp(protocol::NoSuchJobResp {}),
                 }
             }
 
-            UnholdJob { jid } => {
+            Ujreq(protocol::UnholdJobRequest { jid }) => {
                 let mut locked_tasks = self.tasks.lock().unwrap();
                 let task = locked_tasks.get_mut(&jid);
 
@@ -498,23 +581,23 @@ impl Server {
 
                         if is_held {
                             task.state = TaskState::Waiting;
-                            JobServerResp::Ok
+                            Okresp(protocol::OkResp {})
                         } else {
                             error!(
                                 "Attempted to unhold task {}, but current state is {:?}",
                                 jid, task.state
                             );
-                            JobServerResp::NotWaiting
+                            Nwresp(protocol::NotWaitingResp {})
                         }
                     }
 
-                    None => JobServerResp::NoSuchJob,
+                    None => Nsjresp(protocol::NoSuchJobResp {}),
                 }
             }
 
-            CancelJob { jid, remove } => self.cancel_job(jid, remove),
+            Cjreq(protocol::CancelJobRequest { jid, remove }) => self.cancel_job(jid, remove),
 
-            JobStatus { jid } => {
+            Jsreq(protocol::JobStatusRequest { jid }) => {
                 let locked_tasks = self.tasks.lock().unwrap();
                 let task = locked_tasks.get(&jid);
                 match task {
@@ -539,14 +622,14 @@ impl Server {
                             "/dev/null".into()
                         };
 
-                        JobServerResp::JobStatus {
+                        Jsresp(protocol::JobStatusResp {
                             jid: *jid,
                             class: class.as_ref().expect("No class for clone").clone(),
                             cmd: cmds.first().unwrap().clone(),
-                            status: task.unwrap().status(),
+                            status: Some(task.unwrap().status()),
                             variables: variables.clone(),
                             log,
-                        }
+                        })
                     }
 
                     Some(Task {
@@ -584,24 +667,24 @@ impl Server {
                             "/dev/null".into()
                         };
 
-                        JobServerResp::JobStatus {
+                        Jsresp(protocol::JobStatusResp {
                             jid: *jid,
                             class: class.as_ref().map(Clone::clone).unwrap_or("".into()),
                             cmd,
-                            status: task.unwrap().status(),
+                            status: Some(task.unwrap().status()),
                             variables: variables.clone(),
                             log,
-                        }
+                        })
                     }
 
                     None => {
                         error!("No such job: {}", jid);
-                        JobServerResp::NoSuchJob
+                        Nsjresp(protocol::NoSuchJobResp {})
                     }
                 }
             }
 
-            CloneJob { jid } => {
+            Cljreq(protocol::CloneJobRequest { jid }) => {
                 let mut locked_jobs = self.tasks.lock().unwrap();
                 let task = locked_jobs.get(&jid);
 
@@ -644,7 +727,7 @@ impl Server {
                             },
                         );
 
-                        JobServerResp::JobId(new_jid)
+                        Jiresp(protocol::JobIdResp { jid: new_jid })
                     }
 
                     Some(Task {
@@ -683,23 +766,27 @@ impl Server {
                             },
                         );
 
-                        JobServerResp::JobId(new_jid)
+                        Jiresp(protocol::JobIdResp { jid: new_jid })
                     }
 
                     None => {
                         error!("No such job or setup task: {}", jid);
-                        JobServerResp::NoSuchJob
+                        Nsjresp(protocol::NoSuchJobResp {})
                     }
                 }
             }
 
-            AddMatrix {
-                mut vars,
+            Amreq(protocol::AddMatrixRequest {
+                vars,
                 cmd,
                 class,
-                cp_results,
-            } => {
+                cp_resultsopt,
+            }) => {
                 let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
+
+                let mut vars = protocol::reverse_map(&vars);
+                let cp_results =
+                    cp_resultsopt.map(|protocol::add_matrix_request::CpResultsopt::CpResults(s)| s);
 
                 // Get the set of base variables, some of which may be overridden by the matrix
                 // variables in the template.
@@ -758,24 +845,29 @@ impl Server {
                     },
                 );
 
-                JobServerResp::MatrixId(id)
+                Miresp(protocol::MatrixIdResp { id })
             }
 
-            StatMatrix { id } => {
+            Smreq(protocol::StatMatrixRequest { id }) => {
                 if let Some(matrix) = self.matrices.lock().unwrap().get(&id) {
                     info!("Status of matrix {}, {:?}", id, matrix);
 
-                    JobServerResp::MatrixStatus {
+                    let cp_resultsopt = matrix
+                        .cp_results
+                        .as_ref()
+                        .map(|s| protocol::matrix_status_resp::CpResultsopt::CpResults(s.into()));
+
+                    Msresp(protocol::MatrixStatusResp {
                         id,
                         class: matrix.class.clone(),
-                        cp_results: matrix.cp_results.clone(),
+                        cp_resultsopt,
                         cmd: matrix.cmd.clone(),
                         jobs: matrix.jids.clone(),
-                        variables: matrix.variables.clone(),
-                    }
+                        variables: protocol::convert_map(&matrix.variables),
+                    })
                 } else {
                     error!("No such matrix: {}", id);
-                    JobServerResp::NoSuchMatrix
+                    Nsmatresp(protocol::NoSuchMatrixResp {})
                 }
             }
         };
@@ -787,16 +879,16 @@ impl Server {
 impl Server {
     /// Mark the given job as canceled. This doesn't actually do anything yet. The job will be
     /// killed and removed asynchronously.
-    fn cancel_job(&self, jid: usize, remove: bool) -> JobServerResp {
+    fn cancel_job(&self, jid: u64, remove: bool) -> ResponseType {
         // We set the `canceled` flag and let the job server handle the rest.
 
         if let Some(job) = self.tasks.lock().unwrap().get_mut(&jid) {
             info!("Cancelling task {}, {:?}", jid, job);
             job.canceled = Some(remove);
-            JobServerResp::Ok
+            Okresp(protocol::OkResp {})
         } else {
             error!("No such job: {}", jid);
-            JobServerResp::NoSuchJob
+            Nsjresp(protocol::NoSuchJobResp {})
         }
     }
 }
@@ -878,11 +970,7 @@ impl Server {
 
     /// Frees the machine if it is associated with the given task. Does nothing if this machine is
     /// not running this task. Returns true if a machine was freed.
-    fn free_machine(
-        jid: usize,
-        task: &Task,
-        machines: &mut HashMap<String, MachineStatus>,
-    ) -> bool {
+    fn free_machine(jid: u64, task: &Task, machines: &mut HashMap<String, MachineStatus>) -> bool {
         // We need to ensure that the machine is running this task and not another, since it may
         // have been freed and allocated already.
         if let Some(machine) = task.machine.as_ref() {
@@ -904,12 +992,12 @@ impl Server {
     fn try_drive_sm(
         runner: &str,
         log_dir: &str,
-        jid: usize,
+        jid: u64,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
-        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
-        to_remove: &mut HashSet<usize>,
-        copying_flags: Arc<Mutex<HashSet<usize>>>,
+        running_job_handles: &mut HashMap<u64, JobProcessInfo>,
+        to_remove: &mut HashSet<u64>,
+        copying_flags: Arc<Mutex<HashSet<u64>>>,
     ) -> bool {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
         // so it can get garbage collected.
@@ -1005,10 +1093,10 @@ impl Server {
     fn try_drive_sm_waiting(
         runner: &str,
         log_dir: &str,
-        jid: usize,
+        jid: u64,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
-        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        running_job_handles: &mut HashMap<u64, JobProcessInfo>,
     ) -> bool {
         let machine = if let TaskType::SetupTask = task.ty {
             Some(task.machine.as_ref().unwrap().clone())
@@ -1062,10 +1150,10 @@ impl Server {
     fn try_drive_sm_running(
         runner: &str,
         log_dir: &str,
-        jid: usize,
+        jid: u64,
         task: &mut Task,
         _machines: &mut HashMap<String, MachineStatus>,
-        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         idx: usize,
     ) -> bool {
         let job_proc_info = running_job_handles
@@ -1150,11 +1238,11 @@ impl Server {
 
     /// Need to copy results for a task that completed, if any.
     fn try_drive_sm_checking_results(
-        jid: usize,
+        jid: u64,
         task: &mut Task,
         _machines: &mut HashMap<String, MachineStatus>,
-        _running_job_handles: &mut HashMap<usize, JobProcessInfo>,
-        copying_flags: Arc<Mutex<HashSet<usize>>>,
+        _running_job_handles: &mut HashMap<u64, JobProcessInfo>,
+        copying_flags: Arc<Mutex<HashSet<u64>>>,
         log_dir: &str,
     ) -> bool {
         // Look through the stdout for the "RESULTS: " line to get the results path.
@@ -1242,10 +1330,10 @@ impl Server {
     }
 
     fn try_drive_sm_finalize(
-        jid: usize,
+        jid: u64,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
-        _running_job_handles: &mut HashMap<usize, JobProcessInfo>,
+        _running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         results_path: Option<String>,
     ) -> bool {
         let machine = task.machine.as_ref().unwrap();
@@ -1312,11 +1400,11 @@ impl Server {
     }
 
     fn try_drive_sm_canceled(
-        jid: usize,
+        jid: u64,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
-        running_job_handles: &mut HashMap<usize, JobProcessInfo>,
-        to_remove: &mut HashSet<usize>,
+        running_job_handles: &mut HashMap<u64, JobProcessInfo>,
+        to_remove: &mut HashSet<u64>,
         remove: bool,
     ) -> bool {
         info!("Canceling task {}", jid);
@@ -1342,7 +1430,7 @@ impl Server {
     }
 
     fn run_cmd(
-        jid: usize,
+        jid: u64,
         task: &Task,
         machine: &str,
         runner: &str,

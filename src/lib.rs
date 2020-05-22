@@ -4,235 +4,40 @@ use std::collections::HashMap;
 
 use itertools::Itertools;
 
-use serde::{Deserialize, Serialize};
+pub mod protocol {
+    include!(concat!(env!("OUT_DIR"), "/jobserver_proto.rs"));
+
+    impl From<&Vec<String>> for MatrixVarValues {
+        fn from(vec: &Vec<String>) -> Self {
+            MatrixVarValues {
+                values: vec.clone(),
+            }
+        }
+    }
+
+    impl From<&MatrixVarValues> for Vec<String> {
+        fn from(mvv: &MatrixVarValues) -> Self {
+            mvv.values.clone()
+        }
+    }
+
+    pub fn convert_map(
+        map: &std::collections::HashMap<String, Vec<String>>,
+    ) -> std::collections::HashMap<String, MatrixVarValues> {
+        map.iter().map(|(k, v)| (k.clone(), v.into())).collect()
+    }
+
+    pub fn reverse_map(
+        map: &std::collections::HashMap<String, MatrixVarValues>,
+    ) -> std::collections::HashMap<String, Vec<String>> {
+        map.into_iter()
+            .map(|(k, v)| (k.clone(), v.into()))
+            .collect()
+    }
+}
 
 /// The address where the server listens.
 pub const SERVER_ADDR: &str = "127.0.0.1:3030";
-
-/// A request to the jobserver.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum JobServerReq {
-    /// Used for debugging.
-    Ping,
-
-    /// Add the given machine to the list of available machines
-    MakeAvailable {
-        /// The IP:PORT of the machine.
-        addr: String,
-
-        /// The class of the machine.
-        class: String,
-    },
-
-    /// Remove the given machine from the list of available machines
-    RemoveAvailable {
-        /// The IP:PORT of the machine.
-        addr: String,
-    },
-
-    /// List the available machines known to the server.
-    ListAvailable,
-
-    /// Set up a machine and optionally make it available in the given class.
-    SetUpMachine {
-        /// The IP:PORT of the machine.
-        addr: String,
-
-        /// The class of the machine.
-        class: Option<String>,
-
-        /// The setup commands to execute in order.
-        ///
-        /// The commands may use any existing variables known to the server.
-        cmds: Vec<String>,
-    },
-
-    /// Set the value of a variable.
-    SetVar { name: String, value: String },
-
-    /// List all set variables and their values.
-    ListVars,
-
-    /// Add a job to be run on the given class of machine.
-    AddJob {
-        /// The class of machine allowed to run this job.
-        class: String,
-
-        /// The command of the job.
-        ///
-        /// The command may use any existing variables known to the server.
-        cmd: String,
-
-        /// The location to copy results, if any.
-        cp_results: Option<String>,
-    },
-
-    /// Get a list of job IDs.
-    ListJobs,
-
-    /// Cancel a running or scheduled job.
-    CancelJob {
-        /// The job ID of the job to cancel.
-        jid: usize,
-
-        /// The job should be garbage collected and removed from the history.
-        remove: bool,
-    },
-
-    /// Get information on the status of a job.
-    JobStatus {
-        /// The job ID of the job.
-        jid: usize,
-    },
-
-    /// Clone a running or scheduled job. That is, create a new job with the same properties as the
-    /// given job.
-    CloneJob {
-        /// The job ID of the job to cancel.
-        jid: usize,
-    },
-
-    /// Put a job on hold.
-    HoldJob { jid: usize },
-
-    /// Unhold a job on hold.
-    UnholdJob { jid: usize },
-
-    /// Start a matrix with the given variables and command template.
-    AddMatrix {
-        /// The variables and their values, which we take the Cartesian Product over.
-        vars: HashMap<String, Vec<String>>,
-
-        /// The command of the job.
-        ///
-        /// The command may use any existing variables known to the server and variables from the
-        /// set above.
-        cmd: String,
-
-        /// The class of machine allowed to run this job.
-        class: String,
-
-        /// The location to copy results, if any.
-        cp_results: Option<String>,
-    },
-
-    StatMatrix {
-        /// The ID of the matrix.
-        id: usize,
-    },
-}
-
-/// A response to the client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum JobServerResp {
-    /// Succeeded. No return value.
-    Ok,
-
-    /// Succeeded. A list of available machines and their classes.
-    Machines(HashMap<String, String>),
-
-    /// A list of job IDs.
-    Jobs(Vec<usize>),
-
-    /// A list of variables and their values.
-    Vars(HashMap<String, String>),
-
-    /// Succeeded. The job ID of a created job.
-    JobId(usize),
-
-    /// Succeeded. The matrix ID of a created matrix.
-    MatrixId(usize),
-
-    /// Succeeded. The status of a job.
-    JobStatus {
-        class: String,
-        cmd: String,
-        jid: usize,
-        status: Status,
-        variables: HashMap<String, String>,
-        /// The path to the job log. This will be `/dev/null` if the job has not started yet.
-        log: String,
-    },
-
-    /// Succeeded. The status of a matrix.
-    MatrixStatus {
-        /// The command template.
-        cmd: String,
-
-        /// The class of machine allowed to run this job.
-        class: String,
-
-        /// The location to copy results, if any.
-        cp_results: Option<String>,
-
-        /// The matrix ID
-        id: usize,
-
-        /// The job IDs that comprise the matrix.
-        jobs: Vec<usize>,
-
-        /// The variables in the matrix
-        variables: HashMap<String, Vec<String>>,
-    },
-
-    /// Error. The requested machine does not exist.
-    NoSuchMachine,
-
-    /// Error. No such job.
-    NoSuchJob,
-
-    /// Error. No such matrix.
-    NoSuchMatrix,
-
-    /// Error. The job we tried to hold is not waiting (i.e. already running or done) or the job we
-    /// tried to unhold was not held.
-    NotWaiting,
-}
-
-/// The status of a job.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Status {
-    /// The job is waiting to run.
-    Waiting,
-
-    /// The job is currently running.
-    Running {
-        /// The machine the job is running on.
-        machine: String,
-    },
-
-    CopyResults {
-        /// The machine the job is running on.
-        machine: String,
-    },
-
-    /// The job finished runnning.
-    Done {
-        /// The machine the job is ran on.
-        machine: String,
-
-        /// The name of the output files, if any.
-        output: Option<String>,
-    },
-
-    /// Held.
-    Held,
-
-    /// The job was canceled.
-    Canceled,
-
-    /// The job produced an error.
-    Failed {
-        /// The machine where the job was running when the failure occured, if any.
-        machine: Option<String>,
-
-        /// The error that caused the failure.
-        error: String,
-    },
-
-    /// The job is an unknown state (usually due to the server being killed and restarted).
-    Unknown { machine: Option<String> },
-}
 
 pub fn cmd_replace_vars(cmd: &str, vars: &HashMap<String, String>) -> String {
     vars.iter().fold(cmd.to_string(), |cmd, (key, value)| {
@@ -244,7 +49,7 @@ pub fn cmd_replace_machine(cmd: &str, machine: &str) -> String {
     cmd.replace("{MACHINE}", &machine)
 }
 
-pub fn cmd_to_path(jid: usize, cmd: &str, log_dir: &str) -> String {
+pub fn cmd_to_path(jid: u64, cmd: &str, log_dir: &str) -> String {
     let mut name = format!(
         "{}/{}-{}",
         log_dir,
