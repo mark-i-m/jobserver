@@ -22,6 +22,9 @@ Additionally, `jobserver` supports the following:
 - Automatically copies results back to the host, as long as the experiment
   driver outputs a line to `stdout` with format `RESULTS: <OUTPUT FILENAME>`.
 - Good server logging.
+- Tries to be a bit resilient to failures, crashes, and mismatching
+  server/client version by using protobufs to save server history and
+  communicate with client"
 
 # Building
 
@@ -42,7 +45,12 @@ Running the server:
 > cargo run --bin server -- /path/to/experiment/driver /path/to/log4rs/config.yaml
 ```
 
-You may want to run this in a `screen` or `tmux` session or something.
+You may want to run this in a `screen` or `tmux` session or something. The
+first time you run it, you will need to pass the `--allow_snap_fail` flag,
+which allows overwriting server history. The default is to fail and exit if
+loading history fails. It is intended to give a little bit of safety so that if
+you restart in a weird configuration it won't wipe out your server's history,
+which can be annoying.
 
 Running the client:
 
