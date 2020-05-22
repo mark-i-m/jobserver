@@ -28,8 +28,6 @@ use log::{debug, error, info, warn};
 
 use prost::Message;
 
-use serde::{Deserialize, Serialize};
-
 mod snapshot;
 
 /// Then name of the file in the `log_dir` that a snapshot is stored at.
@@ -67,14 +65,14 @@ struct Server {
     client_ping: Arc<AtomicBool>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 enum TaskType {
     Job,
     SetupTask,
 }
 
 /// A state machine for tasks, defining deterministically what they should do next.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 enum TaskState {
     /// This task has not yet started running.
     Waiting,
@@ -118,7 +116,7 @@ enum TaskState {
 
 /// Information about a single task (a job or setup task). This is a big state machine that says
 /// what the status of the task is and has all information to do the next thing when ready.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 struct Task {
     /// The tasks's ID.
     jid: u64,
@@ -149,7 +147,7 @@ struct Task {
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 struct Matrix {
     /// This matrix's ID.
     id: u64,
@@ -171,7 +169,7 @@ struct Matrix {
 }
 
 /// Information about a single machine.
-#[derive(Debug, PartialEq, Clone, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
 struct MachineStatus {
     /// The class of the machine.
     class: String,
