@@ -405,7 +405,8 @@ impl Server {
         info!("Wrote snapshot to {}", filename);
     }
 
-    pub fn load_snapshot(&mut self) {
+    /// Returns true if success.
+    pub fn load_snapshot(&mut self) -> bool {
         let filename = format!("{}/{}", self.log_dir, DUMP_FILENAME);
 
         info!("Attempting to load snapshot from {}", filename);
@@ -414,7 +415,7 @@ impl Server {
             Ok(bytes) => bytes,
             Err(err) => {
                 error!("Unable to read snapshot from disk: {}", err);
-                return;
+                return false;
             }
         };
 
@@ -422,7 +423,7 @@ impl Server {
             Ok(snapshot) => snapshot,
             Err(err) => {
                 error!("Unable to deserialize a snapshot: {}", err);
-                return;
+                return false;
             }
         };
 
@@ -463,5 +464,7 @@ impl Server {
         self.next_jid.store(next_jid, Ordering::Relaxed);
 
         info!("Succeeded in loading snapshot.");
+
+        true
     }
 }

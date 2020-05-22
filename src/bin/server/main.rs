@@ -30,8 +30,8 @@ use prost::Message;
 
 mod snapshot;
 
-/// Then name of the file in the `log_dir` that a snapshot is stored at.
-const DUMP_FILENAME: &str = "server-snapshot.json";
+/// The name of the file in the `log_dir` that a snapshot is stored at.
+const DUMP_FILENAME: &str = "server-snapshot";
 
 /// The server's state.
 #[derive(Debug)]
@@ -290,7 +290,7 @@ impl Task {
 
 impl Server {
     /// Creates a new server. Not listening yet.
-    pub fn new(runner: String, log_dir: String) -> Self {
+    pub fn new(runner: String, log_dir: String, allow_snap_fail: bool) -> Self {
         let mut server = Self {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
@@ -302,7 +302,12 @@ impl Server {
             client_ping: Arc::new(AtomicBool::new(false)),
         };
 
-        server.load_snapshot();
+        let is_loaded = server.load_snapshot();
+
+        if !allow_snap_fail && !is_loaded {
+            error!("Unable to load snapshot. Aborting.");
+            std::process::exit(1);
+        }
 
         server
     }
@@ -1491,6 +1496,9 @@ fn main() {
         (@arg ADDR: --address +takes_value
          "The IP:ADDR for the server to listen on for commands \
          (defaults to `localhost:3030`)")
+        (@arg NOSNAP: --allow_snap_fail
+         "Allow snapshot loading to fail. You will need this the first \
+          time you run the server.")
     }
     .get_matches();
 
@@ -1498,6 +1506,7 @@ fn main() {
     let logging_config = matches.value_of("LOGGING_CONFIG").unwrap();
     let runner = matches.value_of("RUNNER").unwrap();
     let log_dir = matches.value_of("LOG_DIR").unwrap();
+    let allow_snap_fail = matches.is_present("NOSNAP");
 
     // Set the RUST_BACKTRACE environment variable so that we always get backtraces. Normally, one
     // doesn't want this because of the performance penalty, but in this case, we don't care too
@@ -1510,7 +1519,7 @@ fn main() {
     info!("Starting server at {}", addr);
 
     // Listen for client requests on the main thread, while we do work in the background.
-    let server = Arc::new(Server::new(runner.into(), log_dir.into()));
+    let server = Arc::new(Server::new(runner.into(), log_dir.into(), allow_snap_fail));
     Arc::clone(&server).start_work_thread();
     server.listen(addr);
 }
