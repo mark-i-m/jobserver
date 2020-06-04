@@ -218,7 +218,7 @@ fn build_cli() -> clap::App<'static, 'static> {
                 (@setting ArgRequiredElseHelp)
                 (@group MACHINES =>
                     (@attributes +required)
-                    (@arg ADDR: -m --machine +takes_value
+                    (@arg ADDR: -m --machine +takes_value ...
                      "The IP:PORT of the machine")
                     (@arg ADDR_FILE: -f --file +takes_value
                      "A file with one IP:PORT per line")
@@ -448,8 +448,8 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("setup", Some(sub_m)) => {
-            let machines = if let Some(addr) = sub_m.value_of("ADDR") {
-                vec![addr.into()]
+            let machines: Vec<_> = if let Some(addr) = sub_m.values_of("ADDR") {
+                addr.map(Into::into).collect()
             } else if let Some(addr_file) = sub_m.value_of("ADDR_FILE") {
                 std::fs::read_to_string(addr_file)
                     .expect("unable to read address file")
