@@ -917,7 +917,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
         "Job", "Status", "Class", "Command", "Machine", "Output"
     ]);
 
-    const TRUNC: usize = 30;
+    const TRUNC: usize = 50;
 
     // Query each job's status
     for job in jobs.into_iter() {
