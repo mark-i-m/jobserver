@@ -309,6 +309,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                 (@setting ArgRequiredElseHelp)
                 (@arg JID: +required {is_usize} ...
                  "The job ID(s) of the job to clone.")
+                (@arg TIMES: -x --times +takes_value {is_usize}
+                 "(optional) the number of clones to make (default: 1)")
             )
 
             (@subcommand log =>
@@ -629,14 +631,20 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("clone", Some(sub_m)) => {
+            let nclones = sub_m
+                .value_of("TIMES")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(1);
             for jid in sub_m.values_of("JID").unwrap() {
-                let response = make_request(
-                    addr,
-                    Cljreq(protocol::CloneJobRequest {
-                        jid: Jid::from(jid).into(),
-                    }),
-                );
-                println!("Server response: {:#?}", response);
+                for _ in 0..nclones {
+                    let response = make_request(
+                        addr,
+                        Cljreq(protocol::CloneJobRequest {
+                            jid: Jid::from(jid).into(),
+                        }),
+                    );
+                    println!("Server response: {:#?}", response);
+                }
             }
         }
 
