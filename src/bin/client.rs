@@ -261,6 +261,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "The command to execute")
                 (@arg CP_PATH: +required
                  "The location on this host to copy results to")
+                (@arg TIMES: -x --times +takes_value {is_usize}
+                 "(optional) the number of copies of this job to submit (default: 1)")
             )
 
             (@subcommand ls =>
@@ -604,16 +606,23 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("add", Some(sub_m)) => {
-            let req = Ajreq(protocol::AddJobRequest {
-                class: sub_m.value_of("CLASS").unwrap().into(),
-                cmd: sub_m.value_of("CMD").unwrap().into(),
-                cp_resultsopt: sub_m
-                    .value_of("CP_PATH")
-                    .map(|s| protocol::add_job_request::CpResultsopt::CpResults(s.into())),
-            });
+            let nclones = sub_m
+                .value_of("TIMES")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(1);
 
-            let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+            for _ in 0..nclones {
+                let req = Ajreq(protocol::AddJobRequest {
+                    class: sub_m.value_of("CLASS").unwrap().into(),
+                    cmd: sub_m.value_of("CMD").unwrap().into(),
+                    cp_resultsopt: sub_m
+                        .value_of("CP_PATH")
+                        .map(|s| protocol::add_job_request::CpResultsopt::CpResults(s.into())),
+                });
+
+                let response = make_request(addr, req);
+                println!("Server response: {:#?}", response);
+            }
         }
 
         ("rm", Some(sub_m)) => {
