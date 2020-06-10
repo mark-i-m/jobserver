@@ -18,6 +18,8 @@ use prettytable::{cell, row, Table};
 
 use prost::Message;
 
+const DEFAULT_LS_N: usize = 50;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Jid(u64);
 
@@ -267,13 +269,15 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand ls =>
                 (about: "List all jobs.")
-                (@arg JID: {is_usize} ...
+                (@arg JID: {is_usize} ... conflicts_with[N]
                  "The job IDs of the jobs to list. Unknown job IDs are ignored. \
                   List all jobs if omitted.")
                 (@arg LONG: --long conflicts_with[CMD]
                  "Show all output")
                 (@arg CMD: --commands conflicts_with[LONG]
                  "Show only job IDs and commands")
+                (@arg N: -n +takes_value {is_usize} conflicts_with[JID]
+                 "Show the last N jobs (default: 50)")
             )
 
             (@subcommand rm =>
@@ -510,11 +514,15 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(sub_m)) => {
             let is_long = sub_m.is_present("LONG");
+            let suffix = sub_m
+                .value_of("N")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(DEFAULT_LS_N);
             let is_cmd = sub_m.is_present("CMD");
             let jids = sub_m
                 .values_of("JID")
                 .map(|v| JobListMode::Jids(v.map(Jid::from).collect()))
-                .unwrap_or(JobListMode::All);
+                .unwrap_or(JobListMode::Suffix(suffix));
             let jobs = list_jobs(addr, jids);
             print_jobs(jobs, is_long, is_cmd);
         }
@@ -794,8 +802,11 @@ struct JobInfo {
 }
 
 enum JobListMode {
-    /// List all jobs.
+    /// List all jobs
     All,
+
+    /// List a suffix of jobs (the `usize` is the length of the suffix).
+    Suffix(usize),
 
     /// List only JIDs in the set.
     Jids(BTreeSet<Jid>),
@@ -805,15 +816,19 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobInfo> {
     let job_ids = make_request(addr, Ljreq(protocol::ListJobsRequest {}));
 
     if let Jresp(protocol::JobsResp { jobs }) = job_ids {
+        let len = jobs.len();
         stat_jobs(
             addr,
             &mut jobs
                 .into_iter()
                 .map(Jid::new)
-                .filter(|j| match mode {
+                .enumerate()
+                .filter(|(i, j)| match mode {
                     JobListMode::All => true,
+                    JobListMode::Suffix(n) => *i >= len - n,
                     JobListMode::Jids(ref jids) => jids.contains(j),
                 })
+                .map(|(_, j)| j)
                 .collect(),
         )
     } else {
