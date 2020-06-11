@@ -265,6 +265,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "The location on this host to copy results to")
                 (@arg TIMES: -x --times +takes_value {is_usize}
                  "(optional) the number of copies of this job to submit (default: 1)")
+                (@arg RETRY: --retry
+                 "(optional) if the job fails, retry until success or cancellation.")
             )
 
             (@subcommand ls =>
@@ -618,6 +620,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .value_of("TIMES")
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(1);
+            let retry = sub_m.is_present("RETRY");
 
             for _ in 0..nclones {
                 let req = Ajreq(protocol::AddJobRequest {
@@ -626,6 +629,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     cp_resultsopt: sub_m
                         .value_of("CP_PATH")
                         .map(|s| protocol::add_job_request::CpResultsopt::CpResults(s.into())),
+                    repeat_on_fail: retry,
                 });
 
                 let response = make_request(addr, req);

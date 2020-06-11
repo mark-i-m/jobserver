@@ -38,6 +38,7 @@ message Response {
         NoSuchJobResp nsjresp = 10;
         NoSuchMatrixResp nsmatresp = 11;
         NotWaitingResp nwresp = 12;
+        InternalError ierr = 13;
     }
 }
 
@@ -79,7 +80,7 @@ message SetUpMachineRequest {
 }
 
 // Set the value of a variable.
-message SetVarRequest { 
+message SetVarRequest {
     string name = 1;
     string value = 2;
 }
@@ -101,6 +102,9 @@ message AddJobRequest {
     oneof cp_resultsopt {
         string cp_results = 3;
     }
+
+    // Whether to repeat the task on failure.
+    bool repeat_on_fail = 4;
 }
 
 // Get a list of job IDs.
@@ -243,6 +247,9 @@ message NoSuchMatrixResp { }
 // Error. The job we tried to hold is not waiting (i.e. already running or done) or the job we
 // tried to unhold was not held.
 message NotWaitingResp { }
+
+// Error. The server has an internal error.
+message InternalError { }
 
 // The status of a job.
 message Status {

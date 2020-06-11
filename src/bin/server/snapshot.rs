@@ -156,6 +156,10 @@ struct SnapshotTask {
         tags = "9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20"
     )]
     state: Option<SnapshotTaskState>,
+
+    /// If true, then automatically clone the job if it fails.
+    #[prost(bool, tag = "21")]
+    repeat_on_fail: bool,
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
@@ -235,7 +239,7 @@ impl SnapshotTask {
                     results_path: Some(results_path),
                 })) => TaskState::DoneWithResults { results_path },
                 Some(SnapshotTaskState::Error(SnapshotTaskError { error, n })) => {
-                    TaskState::Error {
+                    TaskState::ErrorDone {
                         error,
                         n: n as usize,
                     }
@@ -249,6 +253,7 @@ impl SnapshotTask {
                     machine: was_running.remove(&self.jid),
                 },
             },
+            repeat_on_fail: self.repeat_on_fail,
         }
     }
 }
@@ -281,7 +286,9 @@ impl From<&Task> for SnapshotTask {
                     results_path: Some(results_path),
                 })
             }
-            TaskState::Error { error, n } => {
+            // We serialize both into the final error state so that we don't get tasks starting up
+            // on server restarts.
+            TaskState::Error { error, n } | TaskState::ErrorDone { error, n } => {
                 SnapshotTaskState::Error(SnapshotTaskError { error, n: n as u64 })
             }
             TaskState::Killed => SnapshotTaskState::Killed(0),
@@ -300,6 +307,7 @@ impl From<&Task> for SnapshotTask {
             cmds: task.cmds.clone(),
             canceled: task.canceled,
             state: Some(state),
+            repeat_on_fail: task.repeat_on_fail,
         }
     }
 }

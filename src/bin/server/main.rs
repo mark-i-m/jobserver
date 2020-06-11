@@ -104,8 +104,13 @@ enum TaskState {
         results_path: String,
     },
 
-    /// This task terminated with an error. `n` represents to command index of the failed task.
+    /// This task terminated with an error, but we still need to do cleanup. `n` represents to
+    /// command index of the failed task.
     Error { error: String, n: usize },
+
+    /// This task terminated with an error (and cleanup has already been done). `n` represents to
+    /// command index of the failed task.
+    ErrorDone { error: String, n: usize },
 
     /// This task was killed/canceled, but not garbage collected.
     Killed,
@@ -144,6 +149,9 @@ struct Task {
 
     /// The state of the task that we are currently in. This defines a state machine for the task.
     state: TaskState,
+
+    /// If true, then automatically clone the job if it fails.
+    repeat_on_fail: bool,
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
@@ -223,7 +231,7 @@ impl Task {
                 status.status = protocol::status::Status::Done.into();
             }
 
-            TaskState::Error { .. } => {
+            TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
                 status.status = protocol::status::Status::Failed.into();
             }
 
@@ -247,7 +255,7 @@ impl Task {
                 status.machineopt = Some(Machine(self.machine.as_ref().unwrap().clone()));
             }
 
-            TaskState::Error { .. } => {
+            TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
                 status.machineopt = Some(Machine(self.machine.as_ref().unwrap().clone()));
             }
 
@@ -255,7 +263,10 @@ impl Task {
                 status.machineopt = machine.clone().map(|m| Machine(m));
             }
 
-            _ => {}
+            TaskState::Waiting
+            | TaskState::Held
+            | TaskState::Canceled { .. }
+            | TaskState::Killed => {}
         }
 
         // Set the output
@@ -264,16 +275,37 @@ impl Task {
                 status.outputopt = Some(Output(results_path.clone()));
             }
 
-            _ => {}
+            TaskState::Running { .. }
+            | TaskState::CheckingResults
+            | TaskState::CopyingResults { .. }
+            | TaskState::Finalize { .. }
+            | TaskState::Done
+            | TaskState::Error { .. }
+            | TaskState::ErrorDone { .. }
+            | TaskState::Waiting
+            | TaskState::Held
+            | TaskState::Canceled { .. }
+            | TaskState::Killed
+            | TaskState::Unknown { .. } => {}
         }
 
         // Set the error
         match &self.state {
-            TaskState::Error { error, .. } => {
+            TaskState::Error { error, .. } | TaskState::ErrorDone { error, .. } => {
                 status.erroropt = Some(Error(error.clone()));
             }
 
-            _ => {}
+            TaskState::Running { .. }
+            | TaskState::CheckingResults
+            | TaskState::CopyingResults { .. }
+            | TaskState::Finalize { .. }
+            | TaskState::Done
+            | TaskState::DoneWithResults { .. }
+            | TaskState::Waiting
+            | TaskState::Held
+            | TaskState::Canceled { .. }
+            | TaskState::Killed
+            | TaskState::Unknown { .. } => {}
         }
 
         status
@@ -473,6 +505,7 @@ impl Server {
                         variables,
                         cp_results: None,
                         canceled: None,
+                        repeat_on_fail: false,
                     },
                 );
 
@@ -503,6 +536,8 @@ impl Server {
                 class,
                 cmd,
                 cp_resultsopt,
+                // prost uses a default of `false`.
+                repeat_on_fail,
             }) => {
                 let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -524,6 +559,7 @@ impl Server {
                         variables,
                         machine: None,
                         canceled: None,
+                        repeat_on_fail,
                     },
                 );
 
@@ -642,9 +678,11 @@ impl Server {
                         let cmd = match state {
                             TaskState::Waiting | TaskState::Held => &cmds[0],
                             TaskState::Running(idx) => &cmds[*idx],
+                            TaskState::Error { n, .. } | TaskState::ErrorDone { n, .. } => {
+                                &cmds[*n]
+                            }
                             TaskState::Done
                             | TaskState::DoneWithResults { .. }
-                            | TaskState::Error { .. }
                             | TaskState::CheckingResults
                             | TaskState::CopyingResults { .. }
                             | TaskState::Finalize { .. }
@@ -684,89 +722,42 @@ impl Server {
                 let task = locked_jobs.get(&jid);
 
                 match task {
-                    Some(Task {
-                        jid,
-                        ty: TaskType::Job,
-                        cmds,
-                        class,
-                        variables,
-                        cp_results,
-                        ..
-                    }) => {
+                    Some(
+                        task
+                        @
+                        Task {
+                            ty: TaskType::Job, ..
+                        },
+                    )
+                    | Some(
+                        task
+                        @
+                        Task {
+                            ty: TaskType::SetupTask,
+                            cp_results: None,
+                            repeat_on_fail: false,
+                            ..
+                        },
+                    ) => {
                         let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+                        let task = Self::clone_task(new_jid, task);
 
-                        info!(
-                            "Cloning job {} to job {}, {:?}",
-                            jid,
-                            new_jid,
-                            task.unwrap()
-                        );
+                        locked_jobs.insert(new_jid, task);
 
-                        let cmds = cmds.clone();
-                        let class = class.clone();
-                        let cp_results = cp_results.clone();
-                        let variables = variables.clone();
-
-                        locked_jobs.insert(
-                            new_jid,
-                            Task {
-                                jid: new_jid,
-                                ty: TaskType::Job,
-                                cmds,
-                                class,
-                                cp_results,
-                                variables,
-                                state: TaskState::Waiting,
-                                machine: None,
-                                canceled: None,
-                            },
-                        );
-
-                        Jiresp(protocol::JobIdResp { jid: new_jid })
-                    }
-
-                    Some(Task {
-                        jid,
-                        ty: TaskType::SetupTask,
-                        cmds,
-                        class,
-                        machine,
-                        variables,
-                        ..
-                    }) => {
-                        let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
-
-                        info!(
-                            "Cloning setup task {} to setup task {}, {:?}",
-                            jid, new_jid, task
-                        );
-
-                        let cmds = cmds.clone();
-                        let class = class.clone();
-                        let machine = machine.clone();
-                        let variables = variables.clone();
-
-                        locked_jobs.insert(
-                            new_jid,
-                            Task {
-                                jid: new_jid,
-                                ty: TaskType::SetupTask,
-                                cmds,
-                                class,
-                                machine,
-                                cp_results: None,
-                                state: TaskState::Waiting,
-                                variables,
-                                canceled: None,
-                            },
-                        );
-
-                        Jiresp(protocol::JobIdResp { jid: new_jid })
+                        Jiresp(protocol::JobIdResp { jid })
                     }
 
                     None => {
                         error!("No such job or setup task: {}", jid);
                         Nsjresp(protocol::NoSuchJobResp {})
+                    }
+
+                    weird_state => {
+                        error!(
+                            "Unexpected task state! Ignoring clone request. {:#?}",
+                            weird_state
+                        );
+                        Ierr(protocol::InternalError {})
                     }
                 }
             }
@@ -824,6 +815,7 @@ impl Server {
                             variables: config,
                             machine: None,
                             canceled: None,
+                            repeat_on_fail: false,
                         },
                     );
                 }
@@ -899,6 +891,7 @@ impl Server {
     fn work_thread(self: Arc<Self>) {
         let mut running_job_handles = HashMap::new();
         let mut to_remove = HashSet::new();
+        let mut to_clone = HashSet::new(); // failed tasks we need to clone
         let copying_flags = Arc::new(Mutex::new(HashSet::new()));
 
         // We keep track of whether any task had a state change. If there was, then there is
@@ -939,6 +932,7 @@ impl Server {
                             &mut *locked_machines,
                             &mut running_job_handles,
                             &mut to_remove,
+                            &mut to_clone,
                             copying_flags.clone(),
                         );
                 }
@@ -953,6 +947,16 @@ impl Server {
                     let _ = locked_tasks.remove(&jid);
                 }
 
+                // Clone any failed jobs that need to be cloned.
+                for jid in to_clone.drain() {
+                    let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+                    // unwrap ok, already checked in `try_drive_sm`
+                    let old_task = locked_tasks.get(&jid).unwrap();
+                    let task = Self::clone_task(new_jid, old_task);
+
+                    locked_tasks.insert(new_jid, task);
+                }
+
                 // drop locks
             }
 
@@ -960,6 +964,83 @@ impl Server {
                 "Work thread iteration done (updated={:?}). Sleeping.",
                 updated
             );
+        }
+    }
+
+    /// Clone the given task with the given jid. Return the new `Task`. It is the responsibility of
+    /// the caller to actually add the new `Task` to the list of running tasks.
+    fn clone_task(new_jid: u64, task: &Task) -> Task {
+        match task {
+            Task {
+                jid,
+                ty: TaskType::Job,
+                cmds,
+                class,
+                variables,
+                cp_results,
+                state: _,
+                machine: _,
+                canceled: _,
+                repeat_on_fail,
+            } => {
+                info!("Cloning job {} to job {}, {:?}", jid, new_jid, task);
+
+                let cmds = cmds.clone();
+                let class = class.clone();
+                let cp_results = cp_results.clone();
+                let variables = variables.clone();
+
+                Task {
+                    jid: new_jid,
+                    ty: TaskType::Job,
+                    cmds,
+                    class,
+                    cp_results,
+                    variables,
+                    state: TaskState::Waiting,
+                    machine: None,
+                    canceled: None,
+                    repeat_on_fail: *repeat_on_fail,
+                }
+            }
+
+            Task {
+                jid,
+                ty: TaskType::SetupTask,
+                cmds,
+                class,
+                machine,
+                variables,
+                canceled: _,
+                state: _,
+                cp_results: None,
+                repeat_on_fail: false,
+            } => {
+                info!(
+                    "Cloning setup task {} to setup task {}, {:?}",
+                    jid, new_jid, task
+                );
+
+                let cmds = cmds.clone();
+                let class = class.clone();
+                let machine = machine.clone();
+                let variables = variables.clone();
+
+                Task {
+                    jid: new_jid,
+                    ty: TaskType::SetupTask,
+                    cmds,
+                    class,
+                    machine,
+                    cp_results: None,
+                    state: TaskState::Waiting,
+                    variables,
+                    canceled: None,
+                    repeat_on_fail: false,
+                }
+            }
+
+            _ => unreachable!(),
         }
     }
 
@@ -992,6 +1073,7 @@ impl Server {
         machines: &mut HashMap<String, MachineStatus>,
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         to_remove: &mut HashSet<u64>,
+        to_clone: &mut HashSet<u64>,
         copying_flags: Arc<Mutex<HashSet<u64>>>,
     ) -> bool {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
@@ -1056,21 +1138,33 @@ impl Server {
             TaskState::Done
             | TaskState::DoneWithResults { .. }
             | TaskState::Killed
-            | TaskState::Unknown { .. } => {
+            | TaskState::Unknown { .. }
+            | TaskState::ErrorDone { .. } => {
                 let old = running_job_handles.remove(&jid);
 
                 // Update occured if we actually removed something.
                 old.is_some()
             }
 
-            TaskState::Error { .. } => {
+            TaskState::Error { n, ref error } => {
                 // Free any associated machine.
-                let mut updated = Self::free_machine(jid, task, machines);
+                Self::free_machine(jid, task, machines);
 
                 // Clean up job handles
-                updated = updated || running_job_handles.remove(&jid).is_some();
+                let _ = running_job_handles.remove(&jid).is_some();
 
-                updated
+                // If this task is marked `repeat_on_fail`, then we will need to clone the task,
+                // but we can't do so here because it creates a lot of borrow checker errors (due
+                // to lots of things already being borrowed).
+                if task.repeat_on_fail {
+                    to_clone.insert(jid);
+                }
+
+                // Move to the done state.
+                let error = error.clone();
+                task.update_state(TaskState::ErrorDone { n, error });
+
+                true
             }
 
             TaskState::Canceled { remove } => Self::try_drive_sm_canceled(
