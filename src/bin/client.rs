@@ -829,7 +829,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobInfo> {
                 .enumerate()
                 .filter(|(i, j)| match mode {
                     JobListMode::All => true,
-                    JobListMode::Suffix(n) => *i >= len - n,
+                    JobListMode::Suffix(n) => (*i >= len - n) || (len <= n),
                     JobListMode::Jids(ref jids) => jids.contains(j),
                 })
                 .map(|(_, j)| j)
