@@ -744,7 +744,7 @@ impl Server {
 
                         locked_jobs.insert(new_jid, task);
 
-                        Jiresp(protocol::JobIdResp { jid })
+                        Jiresp(protocol::JobIdResp { jid: new_jid })
                     }
 
                     None => {
