@@ -3,11 +3,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
+use jobserver::{deserialize_ts, serialize_ts};
+
 use log::{error, info};
 
-use super::*;
-
 use prost::{Enumeration, Message, Oneof};
+
+use super::*;
 
 /// A snapshot of the current server state to serialize to disk.
 #[derive(Clone, Message)]
@@ -160,6 +162,14 @@ struct SnapshotTask {
     /// If true, then automatically clone the job if it fails.
     #[prost(bool, tag = "21")]
     repeat_on_fail: bool,
+
+    /// The job enqueued/started timestamp, serialized with the given format.
+    #[prost(string, tag = "22")]
+    timestamp: String,
+
+    /// The job finsih timestamp, serialized with the given format.
+    #[prost(string, optional, tag = "23")]
+    done_timestamp: Option<String>,
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
@@ -254,6 +264,8 @@ impl SnapshotTask {
                 },
             },
             repeat_on_fail: self.repeat_on_fail,
+            timestamp: deserialize_ts(self.timestamp),
+            done_timestamp: self.done_timestamp.map(deserialize_ts),
         }
     }
 }
@@ -308,6 +320,8 @@ impl From<&Task> for SnapshotTask {
             canceled: task.canceled,
             state: Some(state),
             repeat_on_fail: task.repeat_on_fail,
+            timestamp: serialize_ts(task.timestamp),
+            done_timestamp: task.done_timestamp.map(serialize_ts),
         }
     }
 }

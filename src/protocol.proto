@@ -210,6 +210,11 @@ message JobStatusResp {
     map<string, string> variables = 5;
     // The path to the job log. This will be `/dev/null` if the job has not started yet.
     string log = 6;
+
+    string timestamp = 7;
+    oneof donetsop {
+        string done_timestamp = 8;
+    }
 }
 
 // Succeeded. The status of a matrix.

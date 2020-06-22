@@ -12,6 +12,8 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use chrono::{offset::Utc, DateTime};
+
 use clap::clap_app;
 
 use jobserver::{
@@ -21,7 +23,7 @@ use jobserver::{
         request::RequestType::{self, *},
         response::ResponseType::{self, *},
     },
-    SERVER_ADDR,
+    serialize_ts, SERVER_ADDR,
 };
 
 use log::{debug, error, info, warn};
@@ -152,6 +154,13 @@ struct Task {
 
     /// If true, then automatically clone the job if it fails.
     repeat_on_fail: bool,
+
+    /// The time when this job was enqueued if it has not run yet, or the time when it was started
+    /// if it is running or has run.
+    timestamp: DateTime<Utc>,
+
+    /// The time when this job entered a Done or Error state (if it has).
+    done_timestamp: Option<DateTime<Utc>>,
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
@@ -409,399 +418,146 @@ impl Server {
     }
 
     fn handle_request(&self, request: RequestType) -> std::io::Result<ResponseType> {
-        let response = match request {
-            Preq(protocol::PingRequest {}) => Okresp(protocol::OkResp {}),
+        let response =
+            match request {
+                Preq(protocol::PingRequest {}) => Okresp(protocol::OkResp {}),
 
-            Mareq(protocol::MakeAvailableRequest { addr, class }) => {
-                let mut locked = self.machines.lock().unwrap();
+                Mareq(protocol::MakeAvailableRequest { addr, class }) => {
+                    let mut locked = self.machines.lock().unwrap();
 
-                // Check if the machine is already there, since it may be running a job.
-                let old = locked.get(&addr);
+                    // Check if the machine is already there, since it may be running a job.
+                    let old = locked.get(&addr);
 
-                let running_job = if let Some(old_class) = old {
-                    warn!(
-                        "Removing {} from old class {}. New class is {}",
-                        addr, old_class.class, class
-                    );
-
-                    old_class.running
-                } else {
-                    None
-                };
-
-                info!(
-                    "Add machine {}/{} with running job: {:?}",
-                    addr, class, running_job
-                );
-
-                // Add machine
-                locked.insert(
-                    addr.clone(),
-                    MachineStatus {
-                        class,
-                        running: running_job,
-                    },
-                );
-
-                // Respond
-                Okresp(protocol::OkResp {})
-            }
-
-            Rareq(protocol::RemoveAvailableRequest { addr }) => {
-                if let Some(old_class) = self.machines.lock().unwrap().remove(&addr) {
-                    info!("Removed machine {}/{}", addr, old_class.class);
-
-                    // Cancel any running jobs on the machine.
-                    if let Some(running) = old_class.running {
-                        self.cancel_job(running, false);
-                    }
-
-                    Okresp(protocol::OkResp {})
-                } else {
-                    error!("No such machine: {}", addr);
-                    Nsmresp(protocol::NoSuchMachineResp {})
-                }
-            }
-
-            Lareq(protocol::ListAvailableRequest {}) => Mresp(protocol::MachinesResp {
-                machines: self
-                    .machines
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .map(|(addr, info)| (addr.clone(), info.class.clone()))
-                    .collect(),
-            }),
-
-            Lvreq(protocol::ListVarsRequest {}) => Vresp(protocol::VarsResp {
-                vars: self.variables.lock().unwrap().clone(),
-            }),
-
-            Sumreq(protocol::SetUpMachineRequest {
-                addr,
-                classopt,
-                cmds,
-            }) => {
-                let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
-
-                info!(
-                    "Create setup task with ID {}. Machine: {}. Cmds: {:?}",
-                    jid, addr, cmds
-                );
-
-                let variables = self.variables.lock().unwrap().clone();
-                let class =
-                    classopt.map(|protocol::set_up_machine_request::Classopt::Class(class)| class);
-
-                self.tasks.lock().unwrap().insert(
-                    jid,
-                    Task {
-                        jid,
-                        ty: TaskType::SetupTask,
-                        cmds,
-                        class,
-                        machine: Some(addr),
-                        state: TaskState::Waiting,
-                        variables,
-                        cp_results: None,
-                        canceled: None,
-                        repeat_on_fail: false,
-                    },
-                );
-
-                Jiresp(protocol::JobIdResp { jid })
-            }
-
-            Svreq(protocol::SetVarRequest { name, value }) => {
-                let old = self
-                    .variables
-                    .lock()
-                    .unwrap()
-                    .insert(name.clone(), value.clone());
-
-                info!("Set {}={}", name, value);
-
-                if let Some(old_value) = old {
-                    warn!(
-                        "Old value of {} was {}. New value is {}",
-                        name, old_value, value
-                    );
-                }
-
-                // Respond
-                Okresp(protocol::OkResp {})
-            }
-
-            Ajreq(protocol::AddJobRequest {
-                class,
-                cmd,
-                cp_resultsopt,
-                // prost uses a default of `false`.
-                repeat_on_fail,
-            }) => {
-                let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
-
-                info!("Added job {} with class {}: {}", jid, class, cmd);
-
-                let variables = self.variables.lock().unwrap().clone();
-                let cp_results =
-                    cp_resultsopt.map(|protocol::add_job_request::CpResultsopt::CpResults(s)| s);
-
-                self.tasks.lock().unwrap().insert(
-                    jid,
-                    Task {
-                        jid,
-                        ty: TaskType::Job,
-                        cmds: vec![cmd],
-                        class: Some(class),
-                        cp_results,
-                        state: TaskState::Waiting,
-                        variables,
-                        machine: None,
-                        canceled: None,
-                        repeat_on_fail,
-                    },
-                );
-
-                Jiresp(protocol::JobIdResp { jid })
-            }
-
-            Ljreq(protocol::ListJobsRequest {}) => {
-                let tasks: Vec<_> = self.tasks.lock().unwrap().keys().map(|&k| k).collect();
-                Jresp(protocol::JobsResp { jobs: tasks })
-                // drop locks
-            }
-
-            Hjreq(protocol::HoldJobRequest { jid }) => {
-                let mut locked_tasks = self.tasks.lock().unwrap();
-                let task = locked_tasks.get_mut(&jid);
-
-                match task {
-                    Some(task) => {
-                        let is_waiting = match task.state {
-                            TaskState::Waiting | TaskState::Held => true,
-                            _ => false,
-                        };
-
-                        if is_waiting {
-                            task.state = TaskState::Held;
-                            Okresp(protocol::OkResp {})
-                        } else {
-                            error!(
-                                "Attempted to put task {} on hold, but current state is {:?}",
-                                jid, task.state
-                            );
-                            Nwresp(protocol::NotWaitingResp {})
-                        }
-                    }
-
-                    None => Nsjresp(protocol::NoSuchJobResp {}),
-                }
-            }
-
-            Ujreq(protocol::UnholdJobRequest { jid }) => {
-                let mut locked_tasks = self.tasks.lock().unwrap();
-                let task = locked_tasks.get_mut(&jid);
-
-                match task {
-                    Some(task) => {
-                        let is_held = match task.state {
-                            TaskState::Held => true,
-                            _ => false,
-                        };
-
-                        if is_held {
-                            task.state = TaskState::Waiting;
-                            Okresp(protocol::OkResp {})
-                        } else {
-                            error!(
-                                "Attempted to unhold task {}, but current state is {:?}",
-                                jid, task.state
-                            );
-                            Nwresp(protocol::NotWaitingResp {})
-                        }
-                    }
-
-                    None => Nsjresp(protocol::NoSuchJobResp {}),
-                }
-            }
-
-            Cjreq(protocol::CancelJobRequest { jid, remove }) => self.cancel_job(jid, remove),
-
-            Jsreq(protocol::JobStatusRequest { jid }) => {
-                let locked_tasks = self.tasks.lock().unwrap();
-                let task = locked_tasks.get(&jid);
-                match task {
-                    Some(Task {
-                        jid,
-                        ty: TaskType::Job,
-                        class,
-                        cmds,
-                        variables,
-                        machine,
-                        ..
-                    }) => {
-                        info!("Status of job {}, {:?}", jid, task);
-
-                        let log = if let Some(machine) = machine {
-                            let cmd = cmd_replace_machine(
-                                &cmd_replace_vars(cmds.first().unwrap(), &variables),
-                                &machine,
-                            );
-                            format!("{}", cmd_to_path(*jid, &cmd, &self.log_dir))
-                        } else {
-                            "/dev/null".into()
-                        };
-
-                        Jsresp(protocol::JobStatusResp {
-                            jid: *jid,
-                            class: class.as_ref().expect("No class for clone").clone(),
-                            cmd: cmds.first().unwrap().clone(),
-                            status: Some(task.unwrap().status()),
-                            variables: variables.clone(),
-                            log,
-                        })
-                    }
-
-                    Some(Task {
-                        jid,
-                        ty: TaskType::SetupTask,
-                        class,
-                        cmds,
-                        state,
-                        variables,
-                        machine,
-                        ..
-                    }) => {
-                        info!("Status setup task {}, {:?}", jid, task);
-
-                        let cmd = match state {
-                            TaskState::Waiting | TaskState::Held => &cmds[0],
-                            TaskState::Running(idx) => &cmds[*idx],
-                            TaskState::Error { n, .. } | TaskState::ErrorDone { n, .. } => {
-                                &cmds[*n]
-                            }
-                            TaskState::Done
-                            | TaskState::DoneWithResults { .. }
-                            | TaskState::CheckingResults
-                            | TaskState::CopyingResults { .. }
-                            | TaskState::Finalize { .. }
-                            | TaskState::Canceled { .. }
-                            | TaskState::Killed
-                            | TaskState::Unknown { .. } => cmds.last().unwrap(),
-                        }
-                        .clone();
-
-                        let log = if let Some(machine) = machine {
-                            let cmd =
-                                cmd_replace_machine(&cmd_replace_vars(&cmd, &variables), &machine);
-                            format!("{}", cmd_to_path(*jid, &cmd, &self.log_dir))
-                        } else {
-                            "/dev/null".into()
-                        };
-
-                        Jsresp(protocol::JobStatusResp {
-                            jid: *jid,
-                            class: class.as_ref().map(Clone::clone).unwrap_or("".into()),
-                            cmd,
-                            status: Some(task.unwrap().status()),
-                            variables: variables.clone(),
-                            log,
-                        })
-                    }
-
-                    None => {
-                        error!("No such job: {}", jid);
-                        Nsjresp(protocol::NoSuchJobResp {})
-                    }
-                }
-            }
-
-            Cljreq(protocol::CloneJobRequest { jid }) => {
-                let mut locked_jobs = self.tasks.lock().unwrap();
-                let task = locked_jobs.get(&jid);
-
-                match task {
-                    Some(
-                        task
-                        @
-                        Task {
-                            ty: TaskType::Job, ..
-                        },
-                    )
-                    | Some(
-                        task
-                        @
-                        Task {
-                            ty: TaskType::SetupTask,
-                            cp_results: None,
-                            repeat_on_fail: false,
-                            ..
-                        },
-                    ) => {
-                        let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
-                        let task = Self::clone_task(new_jid, task);
-
-                        locked_jobs.insert(new_jid, task);
-
-                        Jiresp(protocol::JobIdResp { jid: new_jid })
-                    }
-
-                    None => {
-                        error!("No such job or setup task: {}", jid);
-                        Nsjresp(protocol::NoSuchJobResp {})
-                    }
-
-                    weird_state => {
-                        error!(
-                            "Unexpected task state! Ignoring clone request. {:#?}",
-                            weird_state
+                    let running_job = if let Some(old_class) = old {
+                        warn!(
+                            "Removing {} from old class {}. New class is {}",
+                            addr, old_class.class, class
                         );
-                        Ierr(protocol::InternalError {})
+
+                        old_class.running
+                    } else {
+                        None
+                    };
+
+                    info!(
+                        "Add machine {}/{} with running job: {:?}",
+                        addr, class, running_job
+                    );
+
+                    // Add machine
+                    locked.insert(
+                        addr.clone(),
+                        MachineStatus {
+                            class,
+                            running: running_job,
+                        },
+                    );
+
+                    // Respond
+                    Okresp(protocol::OkResp {})
+                }
+
+                Rareq(protocol::RemoveAvailableRequest { addr }) => {
+                    if let Some(old_class) = self.machines.lock().unwrap().remove(&addr) {
+                        info!("Removed machine {}/{}", addr, old_class.class);
+
+                        // Cancel any running jobs on the machine.
+                        if let Some(running) = old_class.running {
+                            self.cancel_job(running, false);
+                        }
+
+                        Okresp(protocol::OkResp {})
+                    } else {
+                        error!("No such machine: {}", addr);
+                        Nsmresp(protocol::NoSuchMachineResp {})
                     }
                 }
-            }
 
-            Amreq(protocol::AddMatrixRequest {
-                vars,
-                cmd,
-                class,
-                cp_resultsopt,
-            }) => {
-                let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
-
-                let mut vars = protocol::reverse_map(&vars);
-                let cp_results =
-                    cp_resultsopt.map(|protocol::add_matrix_request::CpResultsopt::CpResults(s)| s);
-
-                // Get the set of base variables, some of which may be overridden by the matrix
-                // variables in the template.
-                vars.extend(
-                    self.variables
+                Lareq(protocol::ListAvailableRequest {}) => Mresp(protocol::MachinesResp {
+                    machines: self
+                        .machines
                         .lock()
                         .unwrap()
                         .iter()
-                        .map(|(k, v)| (k.to_owned(), vec![v.to_owned()])),
-                );
+                        .map(|(addr, info)| (addr.clone(), info.class.clone()))
+                        .collect(),
+                }),
 
-                info!(
-                    "Create matrix with ID {}. Cmd: {:?}, Vars: {:?}",
-                    id, cmd, vars
-                );
+                Lvreq(protocol::ListVarsRequest {}) => Vresp(protocol::VarsResp {
+                    vars: self.variables.lock().unwrap().clone(),
+                }),
 
-                let mut jids = vec![];
-
-                // Create a new job for every element in the cartesian product of the variables.
-                for config in jobserver::cartesian_product(&vars) {
+                Sumreq(protocol::SetUpMachineRequest {
+                    addr,
+                    classopt,
+                    cmds,
+                }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
-                    jids.push(jid);
-
-                    let cmd = cmd_replace_vars(&cmd, &config);
 
                     info!(
-                        "[Matrix {}] Added job {} with class {}: {}",
-                        id, jid, class, cmd
+                        "Create setup task with ID {}. Machine: {}. Cmds: {:?}",
+                        jid, addr, cmds
                     );
+
+                    let variables = self.variables.lock().unwrap().clone();
+                    let class = classopt
+                        .map(|protocol::set_up_machine_request::Classopt::Class(class)| class);
+
+                    self.tasks.lock().unwrap().insert(
+                        jid,
+                        Task {
+                            jid,
+                            ty: TaskType::SetupTask,
+                            cmds,
+                            class,
+                            machine: Some(addr),
+                            state: TaskState::Waiting,
+                            variables,
+                            cp_results: None,
+                            canceled: None,
+                            repeat_on_fail: false,
+                            timestamp: Utc::now(),
+                            done_timestamp: None,
+                        },
+                    );
+
+                    Jiresp(protocol::JobIdResp { jid })
+                }
+
+                Svreq(protocol::SetVarRequest { name, value }) => {
+                    let old = self
+                        .variables
+                        .lock()
+                        .unwrap()
+                        .insert(name.clone(), value.clone());
+
+                    info!("Set {}={}", name, value);
+
+                    if let Some(old_value) = old {
+                        warn!(
+                            "Old value of {} was {}. New value is {}",
+                            name, old_value, value
+                        );
+                    }
+
+                    // Respond
+                    Okresp(protocol::OkResp {})
+                }
+
+                Ajreq(protocol::AddJobRequest {
+                    class,
+                    cmd,
+                    cp_resultsopt,
+                    // prost uses a default of `false`.
+                    repeat_on_fail,
+                }) => {
+                    let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+
+                    info!("Added job {} with class {}: {}", jid, class, cmd);
+
+                    let variables = self.variables.lock().unwrap().clone();
+                    let cp_results = cp_resultsopt
+                        .map(|protocol::add_job_request::CpResultsopt::CpResults(s)| s);
 
                     self.tasks.lock().unwrap().insert(
                         jid,
@@ -809,55 +565,324 @@ impl Server {
                             jid,
                             ty: TaskType::Job,
                             cmds: vec![cmd],
-                            class: Some(class.clone()),
-                            cp_results: cp_results.clone(),
+                            class: Some(class),
+                            cp_results,
                             state: TaskState::Waiting,
-                            variables: config,
+                            variables,
                             machine: None,
                             canceled: None,
-                            repeat_on_fail: false,
+                            repeat_on_fail,
+                            timestamp: Utc::now(),
+                            done_timestamp: None,
                         },
                     );
+
+                    Jiresp(protocol::JobIdResp { jid })
                 }
 
-                self.matrices.lock().unwrap().insert(
-                    id,
-                    Matrix {
-                        id,
-                        cmd,
-                        class,
-                        cp_results,
-                        variables: vars,
-                        jids,
-                    },
-                );
-
-                Miresp(protocol::MatrixIdResp { id })
-            }
-
-            Smreq(protocol::StatMatrixRequest { id }) => {
-                if let Some(matrix) = self.matrices.lock().unwrap().get(&id) {
-                    info!("Status of matrix {}, {:?}", id, matrix);
-
-                    let cp_resultsopt = matrix
-                        .cp_results
-                        .as_ref()
-                        .map(|s| protocol::matrix_status_resp::CpResultsopt::CpResults(s.into()));
-
-                    Msresp(protocol::MatrixStatusResp {
-                        id,
-                        class: matrix.class.clone(),
-                        cp_resultsopt,
-                        cmd: matrix.cmd.clone(),
-                        jobs: matrix.jids.clone(),
-                        variables: protocol::convert_map(&matrix.variables),
-                    })
-                } else {
-                    error!("No such matrix: {}", id);
-                    Nsmatresp(protocol::NoSuchMatrixResp {})
+                Ljreq(protocol::ListJobsRequest {}) => {
+                    let tasks: Vec<_> = self.tasks.lock().unwrap().keys().map(|&k| k).collect();
+                    Jresp(protocol::JobsResp { jobs: tasks })
+                    // drop locks
                 }
-            }
-        };
+
+                Hjreq(protocol::HoldJobRequest { jid }) => {
+                    let mut locked_tasks = self.tasks.lock().unwrap();
+                    let task = locked_tasks.get_mut(&jid);
+
+                    match task {
+                        Some(task) => {
+                            let is_waiting = match task.state {
+                                TaskState::Waiting | TaskState::Held => true,
+                                _ => false,
+                            };
+
+                            if is_waiting {
+                                task.state = TaskState::Held;
+                                Okresp(protocol::OkResp {})
+                            } else {
+                                error!(
+                                    "Attempted to put task {} on hold, but current state is {:?}",
+                                    jid, task.state
+                                );
+                                Nwresp(protocol::NotWaitingResp {})
+                            }
+                        }
+
+                        None => Nsjresp(protocol::NoSuchJobResp {}),
+                    }
+                }
+
+                Ujreq(protocol::UnholdJobRequest { jid }) => {
+                    let mut locked_tasks = self.tasks.lock().unwrap();
+                    let task = locked_tasks.get_mut(&jid);
+
+                    match task {
+                        Some(task) => {
+                            let is_held = match task.state {
+                                TaskState::Held => true,
+                                _ => false,
+                            };
+
+                            if is_held {
+                                task.state = TaskState::Waiting;
+                                Okresp(protocol::OkResp {})
+                            } else {
+                                error!(
+                                    "Attempted to unhold task {}, but current state is {:?}",
+                                    jid, task.state
+                                );
+                                Nwresp(protocol::NotWaitingResp {})
+                            }
+                        }
+
+                        None => Nsjresp(protocol::NoSuchJobResp {}),
+                    }
+                }
+
+                Cjreq(protocol::CancelJobRequest { jid, remove }) => self.cancel_job(jid, remove),
+
+                Jsreq(protocol::JobStatusRequest { jid }) => {
+                    let locked_tasks = self.tasks.lock().unwrap();
+                    let task = locked_tasks.get(&jid);
+                    match task {
+                        Some(Task {
+                            jid,
+                            ty: TaskType::Job,
+                            class,
+                            cmds,
+                            variables,
+                            machine,
+                            ..
+                        }) => {
+                            info!("Status of job {}, {:?}", jid, task);
+
+                            let log = if let Some(machine) = machine {
+                                let cmd = cmd_replace_machine(
+                                    &cmd_replace_vars(cmds.first().unwrap(), &variables),
+                                    &machine,
+                                );
+                                format!("{}", cmd_to_path(*jid, &cmd, &self.log_dir))
+                            } else {
+                                "/dev/null".into()
+                            };
+
+                            Jsresp(protocol::JobStatusResp {
+                                jid: *jid,
+                                class: class.as_ref().expect("No class for clone").clone(),
+                                cmd: cmds.first().unwrap().clone(),
+                                status: Some(task.unwrap().status()),
+                                variables: variables.clone(),
+                                log,
+                                timestamp: serialize_ts(task.unwrap().timestamp),
+                                donetsop: task.unwrap().done_timestamp.map(serialize_ts).map(
+                                    |ts| protocol::job_status_resp::Donetsop::DoneTimestamp(ts),
+                                ),
+                            })
+                        }
+
+                        Some(Task {
+                            jid,
+                            ty: TaskType::SetupTask,
+                            class,
+                            cmds,
+                            state,
+                            variables,
+                            machine,
+                            ..
+                        }) => {
+                            info!("Status setup task {}, {:?}", jid, task);
+
+                            let cmd = match state {
+                                TaskState::Waiting | TaskState::Held => &cmds[0],
+                                TaskState::Running(idx) => &cmds[*idx],
+                                TaskState::Error { n, .. } | TaskState::ErrorDone { n, .. } => {
+                                    &cmds[*n]
+                                }
+                                TaskState::Done
+                                | TaskState::DoneWithResults { .. }
+                                | TaskState::CheckingResults
+                                | TaskState::CopyingResults { .. }
+                                | TaskState::Finalize { .. }
+                                | TaskState::Canceled { .. }
+                                | TaskState::Killed
+                                | TaskState::Unknown { .. } => cmds.last().unwrap(),
+                            }
+                            .clone();
+
+                            let log = if let Some(machine) = machine {
+                                let cmd = cmd_replace_machine(
+                                    &cmd_replace_vars(&cmd, &variables),
+                                    &machine,
+                                );
+                                format!("{}", cmd_to_path(*jid, &cmd, &self.log_dir))
+                            } else {
+                                "/dev/null".into()
+                            };
+
+                            Jsresp(protocol::JobStatusResp {
+                                jid: *jid,
+                                class: class.as_ref().map(Clone::clone).unwrap_or("".into()),
+                                cmd,
+                                status: Some(task.unwrap().status()),
+                                variables: variables.clone(),
+                                log,
+                                timestamp: serialize_ts(task.unwrap().timestamp),
+                                donetsop: task.unwrap().done_timestamp.map(serialize_ts).map(
+                                    |ts| protocol::job_status_resp::Donetsop::DoneTimestamp(ts),
+                                ),
+                            })
+                        }
+
+                        None => {
+                            error!("No such job: {}", jid);
+                            Nsjresp(protocol::NoSuchJobResp {})
+                        }
+                    }
+                }
+
+                Cljreq(protocol::CloneJobRequest { jid }) => {
+                    let mut locked_jobs = self.tasks.lock().unwrap();
+                    let task = locked_jobs.get(&jid);
+
+                    match task {
+                        Some(
+                            task
+                            @
+                            Task {
+                                ty: TaskType::Job, ..
+                            },
+                        )
+                        | Some(
+                            task
+                            @
+                            Task {
+                                ty: TaskType::SetupTask,
+                                cp_results: None,
+                                repeat_on_fail: false,
+                                ..
+                            },
+                        ) => {
+                            let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+                            let task = Self::clone_task(new_jid, task);
+
+                            locked_jobs.insert(new_jid, task);
+
+                            Jiresp(protocol::JobIdResp { jid: new_jid })
+                        }
+
+                        None => {
+                            error!("No such job or setup task: {}", jid);
+                            Nsjresp(protocol::NoSuchJobResp {})
+                        }
+
+                        weird_state => {
+                            error!(
+                                "Unexpected task state! Ignoring clone request. {:#?}",
+                                weird_state
+                            );
+                            Ierr(protocol::InternalError {})
+                        }
+                    }
+                }
+
+                Amreq(protocol::AddMatrixRequest {
+                    vars,
+                    cmd,
+                    class,
+                    cp_resultsopt,
+                }) => {
+                    let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
+
+                    let mut vars = protocol::reverse_map(&vars);
+                    let cp_results = cp_resultsopt
+                        .map(|protocol::add_matrix_request::CpResultsopt::CpResults(s)| s);
+
+                    // Get the set of base variables, some of which may be overridden by the matrix
+                    // variables in the template.
+                    vars.extend(
+                        self.variables
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .map(|(k, v)| (k.to_owned(), vec![v.to_owned()])),
+                    );
+
+                    info!(
+                        "Create matrix with ID {}. Cmd: {:?}, Vars: {:?}",
+                        id, cmd, vars
+                    );
+
+                    let mut jids = vec![];
+
+                    // Create a new job for every element in the cartesian product of the variables.
+                    for config in jobserver::cartesian_product(&vars) {
+                        let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+                        jids.push(jid);
+
+                        let cmd = cmd_replace_vars(&cmd, &config);
+
+                        info!(
+                            "[Matrix {}] Added job {} with class {}: {}",
+                            id, jid, class, cmd
+                        );
+
+                        self.tasks.lock().unwrap().insert(
+                            jid,
+                            Task {
+                                jid,
+                                ty: TaskType::Job,
+                                cmds: vec![cmd],
+                                class: Some(class.clone()),
+                                cp_results: cp_results.clone(),
+                                state: TaskState::Waiting,
+                                variables: config,
+                                machine: None,
+                                canceled: None,
+                                repeat_on_fail: false,
+                                timestamp: Utc::now(),
+                                done_timestamp: None,
+                            },
+                        );
+                    }
+
+                    self.matrices.lock().unwrap().insert(
+                        id,
+                        Matrix {
+                            id,
+                            cmd,
+                            class,
+                            cp_results,
+                            variables: vars,
+                            jids,
+                        },
+                    );
+
+                    Miresp(protocol::MatrixIdResp { id })
+                }
+
+                Smreq(protocol::StatMatrixRequest { id }) => {
+                    if let Some(matrix) = self.matrices.lock().unwrap().get(&id) {
+                        info!("Status of matrix {}, {:?}", id, matrix);
+
+                        let cp_resultsopt = matrix.cp_results.as_ref().map(|s| {
+                            protocol::matrix_status_resp::CpResultsopt::CpResults(s.into())
+                        });
+
+                        Msresp(protocol::MatrixStatusResp {
+                            id,
+                            class: matrix.class.clone(),
+                            cp_resultsopt,
+                            cmd: matrix.cmd.clone(),
+                            jobs: matrix.jids.clone(),
+                            variables: protocol::convert_map(&matrix.variables),
+                        })
+                    } else {
+                        error!("No such matrix: {}", id);
+                        Nsmatresp(protocol::NoSuchMatrixResp {})
+                    }
+                }
+            };
 
         Ok(response)
     }
@@ -982,6 +1007,8 @@ impl Server {
                 machine: _,
                 canceled: _,
                 repeat_on_fail,
+                timestamp: _,
+                done_timestamp: _,
             } => {
                 info!("Cloning job {} to job {}, {:?}", jid, new_jid, task);
 
@@ -1001,6 +1028,8 @@ impl Server {
                     machine: None,
                     canceled: None,
                     repeat_on_fail: *repeat_on_fail,
+                    timestamp: Utc::now(),
+                    done_timestamp: None,
                 }
             }
 
@@ -1015,6 +1044,8 @@ impl Server {
                 state: _,
                 cp_results: None,
                 repeat_on_fail: false,
+                timestamp: _,
+                done_timestamp: _,
             } => {
                 info!(
                     "Cloning setup task {} to setup task {}, {:?}",
@@ -1037,6 +1068,8 @@ impl Server {
                     variables,
                     canceled: None,
                     repeat_on_fail: false,
+                    timestamp: Utc::now(),
+                    done_timestamp: None,
                 }
             }
 
@@ -1209,6 +1242,7 @@ impl Server {
             // Mark the task as running.
             task.update_state(TaskState::Running(0));
             task.machine = Some(machine.clone());
+            task.timestamp = Utc::now();
 
             match Self::run_cmd(jid, task, &machine, runner, log_dir) {
                 Ok(job) => {
@@ -1223,6 +1257,7 @@ impl Server {
                         error: format!("Unable to start job {}: {}", jid, err),
                         n: 0, // first cmd failed
                     });
+                    task.done_timestamp = Some(Utc::now());
                 }
             };
 
@@ -1294,6 +1329,7 @@ impl Server {
                                     ),
                                     n: idx + 1,
                                 });
+                                task.done_timestamp = Some(Utc::now());
                             }
                         };
                     }
@@ -1305,6 +1341,7 @@ impl Server {
                         ),
                         n: idx,
                     });
+                    task.done_timestamp = Some(Utc::now());
                 }
 
                 true
@@ -1484,6 +1521,7 @@ impl Server {
         } else {
             task.update_state(TaskState::Done);
         }
+        task.done_timestamp = Some(Utc::now());
 
         true
     }
@@ -1513,6 +1551,7 @@ impl Server {
         } else {
             task.update_state(TaskState::Killed);
             task.canceled = None; // No need to cancel it again!
+            task.done_timestamp = Some(Utc::now());
         }
 
         true

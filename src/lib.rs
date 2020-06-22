@@ -2,7 +2,11 @@
 
 use std::collections::HashMap;
 
+use chrono::{offset::Utc, DateTime};
+
 use itertools::Itertools;
+
+use log::error;
 
 pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/jobserver_proto.rs"));
@@ -71,4 +75,19 @@ pub fn cartesian_product<'v>(
         .map(|(k, vs)| vs.iter().map(move |v| (k.clone(), v.clone())))
         .multi_cartesian_product()
         .map(|config: Vec<(String, String)>| config.into_iter().collect())
+}
+
+const TS_FORMAT: &str = "%+"; // ISO 8601 format
+
+pub fn serialize_ts(ts: DateTime<Utc>) -> String {
+    ts.format(TS_FORMAT).to_string()
+}
+
+pub fn deserialize_ts(s: String) -> DateTime<Utc> {
+    DateTime::parse_from_str(&s, TS_FORMAT)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|err| {
+            error!("Unable to deserialize timestamp: {:?}, {}", s, err);
+            Utc::now()
+        })
 }
