@@ -18,7 +18,7 @@ use prettytable::{cell, row, Table};
 
 use prost::Message;
 
-const DEFAULT_LS_N: usize = 50;
+const DEFAULT_LS_N: usize = 40;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Jid(u64);
