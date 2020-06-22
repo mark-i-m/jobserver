@@ -24,7 +24,6 @@ failure = "0.1.5"
 log4rs = "0.8.3"
 chrono = "0.4.9"
 prost = "0.6"
-humantime = "2.0.1"
 
 [build-dependencies]
 prost-build = "0.6"
