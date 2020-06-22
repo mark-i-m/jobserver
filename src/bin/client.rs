@@ -7,9 +7,12 @@ use std::net::{Shutdown, TcpStream};
 #[cfg(target_family = "unix")]
 use std::os::unix::process::CommandExt;
 
+use chrono::{offset::Utc, DateTime};
+
 use clap::clap_app;
 
 use jobserver::{
+    deserialize_ts,
     protocol::{self, request::RequestType::*, response::ResponseType::*},
     SERVER_ADDR,
 };
@@ -803,6 +806,8 @@ struct JobInfo {
     jid: Jid,
     status: Status,
     variables: HashMap<String, String>,
+    timestamp: DateTime<Utc>,
+    done_timestamp: Option<DateTime<Utc>>,
 }
 
 enum JobListMode {
@@ -854,7 +859,9 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
                 jid,
                 status,
                 variables,
-                ..
+                timestamp,
+                donetsop,
+                log: _,
             }) = status
             {
                 let status = Status::from(status.expect("Status is unexpectedly missing"));
@@ -864,6 +871,10 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
                     jid: Jid::new(jid),
                     status,
                     variables,
+                    timestamp: deserialize_ts(timestamp),
+                    done_timestamp: donetsop.map(
+                        |protocol::job_status_resp::Donetsop::DoneTimestamp(ts)| deserialize_ts(ts),
+                    ),
                 })
             } else {
                 println!("Unable to find job {}", jid);
@@ -988,12 +999,14 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 class,
                 status: Status::Waiting,
                 variables: _variables,
+                timestamp,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Fb->"Waiting", class, cmd, "", ""]);
+                let status = format!("Waiting ({})", Utc::now() - timestamp);
+                table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
             JobInfo {
@@ -1002,12 +1015,14 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 class,
                 status: Status::Held,
                 variables: _variables,
+                timestamp,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Fb->"Held", class, cmd, "", ""]);
+                let status = format!("Held ({})", Utc::now() - timestamp);
+                table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
             JobInfo {
@@ -1020,12 +1035,15 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                         output: None,
                     },
                 variables: _variables,
+                timestamp,
+                done_timestamp,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Fm->"Done", class, cmd, machine, ""]);
+                let status = format!("Done in {}", done_timestamp.unwrap() - timestamp);
+                table.add_row(row![b->jid, Fm->status, class, cmd, machine, ""]);
             }
 
             JobInfo {
@@ -1038,13 +1056,16 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                         output: Some(path),
                     },
                 variables: _variables,
+                timestamp,
+                done_timestamp,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
                 let path = if is_long { path } else { "Ready".into() };
-                table.add_row(row![b->jid, Fg->"Done", class, cmd, machine, Fg->path]);
+                let status = format!("Done in {}", done_timestamp.unwrap() - timestamp);
+                table.add_row(row![b->jid, Fg->status, class, cmd, machine, Fg->path]);
             }
 
             JobInfo {
@@ -1053,12 +1074,15 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 class,
                 status: Status::Failed { error, machine },
                 variables: _variables,
+                timestamp,
+                done_timestamp,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Frbu->"Failed", class, cmd,
+                let status = format!("Failed in {}", done_timestamp.unwrap() - timestamp);
+                table.add_row(row![b->jid, Frbu->status, class, cmd,
                               if let Some(machine) = machine { machine } else {"".into()}, error]);
             }
 
@@ -1068,12 +1092,14 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 class,
                 status: Status::Running { machine },
                 variables: _variables,
+                timestamp,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Fy->"Running", class, cmd, machine, ""]);
+                let status = format!("Running ({})", Utc::now() - timestamp);
+                table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
 
             JobInfo {
@@ -1082,12 +1108,14 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 class,
                 status: Status::CopyResults { machine },
                 variables: _variables,
+                timestamp,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Fy->"Copying Result", class, cmd, machine, ""]);
+                let status = format!("Copy Results ({})", Utc::now() - timestamp);
+                table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
         }
     }
