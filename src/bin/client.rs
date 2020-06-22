@@ -1005,7 +1005,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                let status = format!("Waiting ({})", Utc::now() - timestamp);
+                let status = format!("Waiting ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
@@ -1021,7 +1021,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                let status = format!("Held ({})", Utc::now() - timestamp);
+                let status = format!("Held ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
@@ -1042,7 +1042,10 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                let status = format!("Done in {}", done_timestamp.unwrap() - timestamp);
+                let status = format!(
+                    "Done in {}",
+                    human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
+                );
                 table.add_row(row![b->jid, Fm->status, class, cmd, machine, ""]);
             }
 
@@ -1064,7 +1067,10 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                     cmd.truncate(TRUNC);
                 }
                 let path = if is_long { path } else { "Ready".into() };
-                let status = format!("Done in {}", done_timestamp.unwrap() - timestamp);
+                let status = format!(
+                    "Done in {}",
+                    human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
+                );
                 table.add_row(row![b->jid, Fg->status, class, cmd, machine, Fg->path]);
             }
 
@@ -1081,7 +1087,10 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                let status = format!("Failed in {}", done_timestamp.unwrap() - timestamp);
+                let status = format!(
+                    "Failed in {}",
+                    human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
+                );
                 table.add_row(row![b->jid, Frbu->status, class, cmd,
                               if let Some(machine) = machine { machine } else {"".into()}, error]);
             }
@@ -1098,7 +1107,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                let status = format!("Running ({})", Utc::now() - timestamp);
+                let status = format!("Running ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
 
@@ -1114,7 +1123,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                let status = format!("Copy Results ({})", Utc::now() - timestamp);
+                let status = format!("Copy Results ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
         }
@@ -1240,4 +1249,8 @@ fn is_usize(s: String) -> Result<(), String> {
         .parse::<usize>()
         .map(|_| ())
         .map_err(|e| format!("{:?}", e))
+}
+
+fn human_ts(d: chrono::Duration) -> humantime::Duration {
+    humantime::Duration::from(d.to_std().unwrap_or_default())
 }
