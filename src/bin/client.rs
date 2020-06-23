@@ -1278,11 +1278,11 @@ fn human_ts(d: chrono::Duration) -> String {
         display_ts.push_str(&format!("{}h", display_hours));
     }
 
-    if display_minutes > 0 {
+    if display_minutes > 0 && display_days == 0 {
         display_ts.push_str(&format!("{}m", display_minutes));
     }
 
-    if display_seconds > 0 {
+    if display_seconds > 0 && display_days == 0 && display_hours == 0 {
         display_ts.push_str(&format!("{}s", display_seconds));
     }
 
