@@ -5,7 +5,7 @@ authors = ["mark-i-m"]
 edition = "2018"
 license = "MIT/Apache-2.0"
 readme = "README.md"
-keywords = ["jobserver", "jobs", "tasks", "cluster", "automate", "experiments", "cluster-manager"]
+keywords = ["jobs", "tasks", "cluster", "automate", "experiments"]
 repository = "https://github.com/mark-i-m/jobserver"
 description = """
 This is a job server and client for running many experiments across many test
