@@ -1,22 +1,22 @@
-# `jobserver`
+# `expjobserver`
 
 This is a job server and client for running many experiments across many test
 machines. In some sense, it is like a simple cluster manager.
 
-The high-level idea is that you have a server (the `jobserver`) that runs on
+The high-level idea is that you have a server (the `expjobserver`) that runs on
 your machine (some machine that is always on, like a desktop), perhaps in a
 screen session or something. You have a bunch of experiments that you want to
 run from some driver application or script. You also have a bunch of machines,
-possibly of different types, where you want to run jobs. `jobserver` schedules
+possibly of different types, where you want to run jobs. `expjobserver` schedules
 those jobs to run on those machines and copies the results back to the host
 machine (the one running the server). One interracts with the server using the
 stateless CLI client.
 
-Additionally, `jobserver` supports the following:
+Additionally, `expjobserver` supports the following:
 - An awesome CLI client, with the ability to generate shell completion scripts.
 - Machine classes: similar machines are added to the same class, and jobs are
   scheduled to run on any machine in the class.
-- Machine setup: the `jobserver` can run a sequence of setup machines and
+- Machine setup: the `expjobserver` can run a sequence of setup machines and
   automatically add machines to its class when finished.
 - Job matrices: Run jobs with different combinations of parameters.
 - Automatically copies results back to the host, as long as the experiment
@@ -26,89 +26,70 @@ Additionally, `jobserver` supports the following:
   server/client version by using protobufs to save server history and
   communicate with client"
 
-# Building
+# Prerequisites
 
-Requires:
 - `rust 1.37+`
 
-```console
-> cargo build
+# Installing
+
+```sh
+cargo install expjobserver
 ```
 
-The debug build seems to be fast enough for ordinary use.
+This will install both the client (`j`) and server (`expjobserver`).
+
+# Building
+
+These commands both build client and server:
+
+```sh
+# Debug
+cargo build
+
+# Release
+cargo build --release
+```
+
+In practice, it doesn't matter, as I've disable optimizations and added
+debuginfo for the release build too. The reason is that performance doesn't
+matter that much here (and the server isn't performance-optimized anyway),
+whereas debuggability is very helpful.
 
 # Usage
 
-Running the server:
+## Running the server
 
-```console
-> cargo run --bin server -- /path/to/experiment/driver /path/to/log4rs/config.yaml
+```sh
+expjobserver \
+  /path/to/experiment/driver \
+  /path/to/logs/ \
+  /path/to/log4rs/config.yaml
 ```
 
-You may want to run this in a `screen` or `tmux` session or something. The
-first time you run it, you will need to pass the `--allow_snap_fail` flag,
+The first time you run it, you will need to pass the `--allow_snap_fail` flag,
 which allows overwriting server history. The default is to fail and exit if
 loading history fails. It is intended to give a little bit of safety so that if
 you restart in a weird configuration it won't wipe out your server's history,
 which can be annoying.
 
-Running the client:
-
-```console
-> cargo run --bin client -- <args>
-```
-
-There are a lot of commands. They are well-documented by the CLI usage message.
-
-I recommend creating an alias for this client. I use the alias `j`, so that I
-can just run commands like:
-
-```console
-> j job ls
-```
-
-# Server Logging
+You may want to run the server in a `screen` or `tmux` session. That way, you
+can detach and leave it running in the background. You can always check the
+logs by either attaching again or looking at `/path/to/logs` from the command,
+where the server will dump debug logs.
 
 The server uses the [`log4rs`][l4rs] library for logging. It is highly configurable.
+[`example.log.yml`](./example.log.yml) is a reasonable config that I use.
+To use it, point the server to it using the second argument in the command.
 
 [l4rs]: https://crates.io/crates/log4rs
 
-I use the following config:
+## Running the client
 
-```yaml
-# Check this file for config changes every 30 seconds
-refresh_rate: 30 seconds
-
-# Write log records to stdout and to the logfile
-appenders:
-  stdout:
-    kind: console
-    # Format of the log entries
-    encoder:
-      pattern: "[{d} {h({l})}] {f}:{L} {m}{n}"
-
-  logfile:
-    kind: file
-    path: "/nobackup/scratch/jobserver.log"
-    encoder:
-      pattern: "[{d} {h({l})}] {f}:{L} {m}{n}"
-    # To keep logs compact, don't write debugging info
-    filters:
-      - compact:
-        kind: threshold
-        level: info
-
-loggers:
-  # All log entries from the `server` binary go to the stdout and logfile appenders
-  server:
-    level: debug
-    appenders:
-      - stdout
-      - logfile
+```sh
+j --help
 ```
 
-Save these contents to a file and point the server to it using the second
-argument in the command.
+There are a lot of subcommands. They are well-documented by the CLI usage message.
 
 # Examples
 

@@ -1,6 +1,6 @@
 [package]
-name = "jobserver"
-version = "0.2.0"
+name = "expjobserver"
+version = "0.3.0"
 authors = ["mark-i-m"]
 edition = "2018"
 license = "MIT/Apache-2.0"
@@ -12,6 +12,14 @@ This is a job server and client for running many experiments across many test
 platforms. In some sense, it is like a simple cluster manager.
 """
 categories = ["science"]
+
+[[bin]]
+name = "j"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "expjobserver"
+path = "src/bin/server/main.rs"
 
 [dependencies]
 log = "0.4.7"
@@ -27,3 +35,7 @@ prost = "0.6"
 
 [build-dependencies]
 prost-build = "0.6"
+
+[profile.release]
+opt-level = 0
+debug = true

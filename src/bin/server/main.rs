@@ -16,8 +16,8 @@ use chrono::{offset::Utc, DateTime};
 
 use clap::clap_app;
 
-use jobserver::{
-    cmd_replace_machine, cmd_replace_vars, cmd_to_path,
+use expjobserver::{
+    cartesian_product, cmd_replace_machine, cmd_replace_vars, cmd_to_path,
     protocol::{
         self,
         request::RequestType::{self, *},
@@ -816,7 +816,7 @@ impl Server {
                     let mut jids = vec![];
 
                     // Create a new job for every element in the cartesian product of the variables.
-                    for config in jobserver::cartesian_product(&vars) {
+                    for config in cartesian_product(&vars) {
                         let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
                         jids.push(jid);
 

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use jobserver::{deserialize_ts, serialize_ts};
+use expjobserver::{deserialize_ts, serialize_ts};
 
 use log::{error, info};
 

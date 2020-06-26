@@ -11,7 +11,7 @@ use chrono::{offset::Utc, DateTime};
 
 use clap::clap_app;
 
-use jobserver::{
+use expjobserver::{
     deserialize_ts,
     protocol::{self, request::RequestType::*, response::ResponseType::*},
     SERVER_ADDR,
