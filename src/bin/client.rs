@@ -171,7 +171,80 @@ impl From<protocol::Status> for Status {
 }
 
 fn build_cli() -> clap::App<'static, 'static> {
-    clap_app! { client =>
+    use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
+
+    // We build this here because the macro doesn't have shorthand for some of the things we want
+    // to do, most notably `multiple` with `number_values(1)`.
+    let machine_cmds = App::new("machine")
+        .about("Operations on the available pool of machines.")
+        .setting(AppSettings::SubcommandRequiredElseHelp)
+        .subcommand(
+            SubCommand::with_name("add")
+                .about("Make the given machine available with the given class.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .required(true)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .required(true)
+                        .help("The class of the machine"),
+                ),
+        )
+        .subcommand(SubCommand::with_name("ls").about("List available machines."))
+        .subcommand(
+            SubCommand::with_name("rm")
+                .about("Remove the given machine from the available pool.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .required(true)
+                        .multiple(true)
+                        .help("The IP:PORT of the machine"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("setup")
+                .about("Set up the given machine using the given command")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .short("m")
+                        .long("machine")
+                        .takes_value(true)
+                        .multiple(true)
+                        .number_of_values(1)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("ADDR_FILE")
+                        .short("f")
+                        .long("file")
+                        .takes_value(true)
+                        .help("A file with one IP:PORT per line"),
+                )
+                .group(
+                    ArgGroup::with_name("MACHINES")
+                        .required(true)
+                        .args(&["ADDR", "ADDR_FILE"]),
+                )
+                .arg(
+                    Arg::with_name("CMD")
+                        .required(true)
+                        .multiple(true)
+                        .help("The setup commands, each as a single string"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .long("class")
+                        .takes_value(true)
+                        .help("If passed, the machine is added to the class after setup."),
+                ),
+        );
+
+    (clap_app! { client =>
         (about: "CLI client for the jobserver")
         (@setting SubcommandRequiredElseHelp)
         (@setting DisableVersion)
@@ -199,47 +272,6 @@ fn build_cli() -> clap::App<'static, 'static> {
             (@arg BIN: --bin +takes_value
              "The name of the binary or alias by which the client is invoked. For example, if you \
              alias `j` as the client, you should pass this flag with the value `j`."
-            )
-        )
-
-        (@subcommand machine =>
-            (about: "Operations on the available pool of machines.")
-            (@setting SubcommandRequiredElseHelp)
-
-            (@subcommand add =>
-                (about: "Make the given machine available with the given class.")
-                (@setting ArgRequiredElseHelp)
-                (@arg ADDR: +required
-                 "The IP:PORT of the machine")
-                (@arg CLASS: +required
-                 "The class of the machine")
-            )
-
-            (@subcommand rm =>
-                (about: "Remove the given machine from the available pool.")
-                (@setting ArgRequiredElseHelp)
-                (@arg ADDR: +required ...
-                 "The IP:PORT of the machine")
-            )
-
-            (@subcommand ls =>
-                (about: "List available machines.")
-            )
-
-            (@subcommand setup =>
-                (about: "Set up the given machine using the given command")
-                (@setting ArgRequiredElseHelp)
-                (@group MACHINES =>
-                    (@attributes +required)
-                    (@arg ADDR: -m --machine +takes_value ...
-                     "The IP:PORT of the machine")
-                    (@arg ADDR_FILE: -f --file +takes_value
-                     "A file with one IP:PORT per line")
-                )
-                (@arg CMD: +required ...
-                 "The setup commands, each as a single string")
-                (@arg CLASS: --class +takes_value
-                 "If passed, the machine is added to the class after setup.")
             )
         )
 
@@ -391,7 +423,7 @@ fn build_cli() -> clap::App<'static, 'static> {
                 )
             )
         )
-    }
+    }).subcommand(machine_cmds)
 }
 
 fn main() {
