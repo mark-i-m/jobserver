@@ -1402,20 +1402,21 @@ impl Server {
                     let results_path = results_path.clone();
 
                     std::thread::spawn(move || {
-                        // Copy via SCP
+                        // Copy via rsync
                         info!("Copying results (job {}) to {}", jid, cp_results);
 
                         // HACK: assume all machine names are in the form HOSTNAME:PORT.
                         let machine_ip = machine.split(":").next().unwrap();
 
-                        let scp_result = std::process::Command::new("scp")
+                        let rsync_result = std::process::Command::new("rsync")
+                            .arg("-az")
                             .arg(&format!("{}:{}", machine_ip, results_path))
                             .arg(cp_results)
                             .stdout(Stdio::null())
                             .stderr(Stdio::null())
                             .output();
 
-                        match scp_result {
+                        match rsync_result {
                             Ok(..) => info!("Finished copying results for job {}.", jid),
                             Err(e) => error!("Error copy results for job {}: {}", jid, e),
                         }
