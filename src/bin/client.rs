@@ -83,7 +83,7 @@ pub enum Status {
     Held,
 
     /// The job was canceled.
-    Canceled,
+    Canceled { machine: Option<String> },
 
     /// The job produced an error.
     Failed {
@@ -140,7 +140,15 @@ impl From<protocol::Status> for Status {
 
             5 => Status::Held,
 
-            6 => Status::Canceled,
+            6 => Status::Canceled {
+                machine: if let Some(protocol::status::Machineopt::Machine(machine)) =
+                    status.machineopt
+                {
+                    Some(machine)
+                } else {
+                    None
+                },
+            },
 
             7 => {
                 let protocol::status::Erroropt::Error(error) = status.erroropt.unwrap();
@@ -983,14 +991,19 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 jid,
                 mut cmd,
                 class,
-                status: Status::Canceled,
+                status: Status::Canceled { machine },
                 variables: _variables,
                 ..
             } => {
                 if !is_long {
                     cmd.truncate(TRUNC);
                 }
-                table.add_row(row![b->jid, Fri->"Canceled", class, cmd, "", ""]);
+                let machine = if let Some(machine) = machine {
+                    machine
+                } else {
+                    "".into()
+                };
+                table.add_row(row![b->jid, Fri->"Canceled", class, cmd, machine, ""]);
             }
 
             JobInfo {
@@ -1212,7 +1225,7 @@ fn make_matrix_csv_inner(
             job.jid.to_string(),
             match job.status {
                 Status::Unknown { .. } => "Unknown".to_owned(),
-                Status::Canceled => "Canceled".to_owned(),
+                Status::Canceled { .. } => "Canceled".to_owned(),
                 Status::Waiting => "Waiting".to_owned(),
                 Status::Held => "Held".to_owned(),
                 Status::Running { .. } => "Running".to_owned(),
