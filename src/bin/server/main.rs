@@ -94,7 +94,8 @@ enum TaskState {
     /// Everything is done, and we are about to move to a Done state.
     Finalize { results_path: Option<String> },
 
-    /// This task was canceled. If `remove` is true, then it will be garbage collected.
+    /// This task is in the process of being canceled. If `remove` is true, then it will be garbage
+    /// collected. Otherwise, it will simply move to the `Killed` state.
     Canceled { remove: bool },
 
     /// This task has completed.
