@@ -1,5 +1,8 @@
 fn main() {
-    let res = prost_build::compile_protos(&["src/protocol.proto"], &["src/"]);
+    let res = prost_build::compile_protos(
+        &["src/protocol.proto", "src/bin/server/state.proto"],
+        &["src/"],
+    );
 
     match res {
         Ok(_) => {}
@@ -10,4 +13,5 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=src/protocol.proto");
+    println!("cargo:rerun-if-changed=src/bin/server/state.proto");
 }

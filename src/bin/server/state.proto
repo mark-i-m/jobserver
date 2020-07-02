@@ -1,0 +1,104 @@
+syntax = "proto2";
+package state_snapshot;
+
+message Snapshot {
+    map<string, SnapshotMachineStatus> machines = 1;
+    map<string, string> variables = 2;
+    map<uint64, SnapshotTask> tasks = 3;
+    map<uint64, SnapshotMatrix> matrices = 4;
+    required uint64 next_jid = 5;
+}
+
+message SnapshotMachineStatus {
+    required string class = 1;
+    optional uint64 running = 2;
+}
+
+message SnapshotTask {
+    required uint64 jid = 1;
+    required SnapshotTaskType ty = 2;
+    optional string machine = 3;
+    optional string class = 4;
+    optional string cp_results = 5;
+    map<string, string> variables = 6;
+    repeated string cmds = 7;
+    optional bool canceled = 8;
+    required SnapshotTaskState state = 9;
+    required bool repeat_on_fail = 10;
+    required string timestamp = 11;
+    optional string done_timestamp = 12;
+}
+
+enum SnapshotTaskType {
+    Job = 0;
+    SetupTask = 1;
+}
+
+message SnapshotTaskState {
+    oneof state {
+        Waiting waiting = 1;
+        Held held = 2;
+        Running running = 3;
+        CheckingResults checking_results = 4;
+        CopyingResults copying_results = 5;
+        Finalize finalize = 6;
+        Canceled canceled = 7;
+        Done done = 8;
+        DoneWithResults donewr = 9;
+        Error error = 10;
+        Killed killed = 11;
+        Unknown unknown = 12;
+    }
+}
+
+message Waiting { }
+
+message Held { }
+
+message Running {
+    required uint64 n = 1;
+}
+
+message CheckingResults { }
+
+message CopyingResults {
+    required string results_path = 1;
+}
+
+message Finalize {
+    optional string results_path = 1;
+}
+
+message Canceled {
+    required bool remove = 1;
+}
+
+message Done { }
+
+message DoneWithResults {
+    required string results_path = 1;
+}
+
+message Error {
+    required string error = 1;
+    required uint64 n = 2;
+}
+
+message Killed { }
+
+message Unknown {
+    optional string machine = 1;
+}
+
+message SnapshotMatrix {
+    required uint64 id = 1;
+    required string cmd = 2;
+    required string class = 3;
+    optional string cp_results = 4;
+    map<string, MatrixVarValues> variables = 5;
+    repeated uint64 jids = 6;
+}
+
+message MatrixVarValues {
+    repeated string values = 1;
+}
