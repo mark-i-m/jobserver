@@ -21,8 +21,8 @@ appenders:
         level: info
 
 loggers:
-  # All log entries from the `server` binary go to the stdout and logfile appenders
-  server:
+  # All log entries from the `expjobserver` binary go to the stdout and logfile appenders
+  expjobserver:
     level: debug
     appenders:
       - stdout
