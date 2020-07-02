@@ -100,8 +100,8 @@ pub enum Status {
 
 impl From<protocol::Status> for Status {
     fn from(status: protocol::Status) -> Self {
-        match status.status {
-            0 => Status::Unknown {
+        match status.status() {
+            protocol::status::Status::Unknown => Status::Unknown {
                 machine: if let Some(protocol::status::Machineopt::Machine(machine)) =
                     status.machineopt
                 {
@@ -111,19 +111,19 @@ impl From<protocol::Status> for Status {
                 },
             },
 
-            1 => Status::Waiting,
+            protocol::status::Status::Waiting => Status::Waiting,
 
-            2 => {
+            protocol::status::Status::Running => {
                 let protocol::status::Machineopt::Machine(machine) = status.machineopt.unwrap();
                 Status::Running { machine }
             }
 
-            3 => {
+            protocol::status::Status::Copyresults => {
                 let protocol::status::Machineopt::Machine(machine) = status.machineopt.unwrap();
                 Status::CopyResults { machine }
             }
 
-            4 => {
+            protocol::status::Status::Done => {
                 let protocol::status::Machineopt::Machine(machine) = status.machineopt.unwrap();
 
                 Status::Done {
@@ -138,9 +138,9 @@ impl From<protocol::Status> for Status {
                 }
             }
 
-            5 => Status::Held,
+            protocol::status::Status::Held => Status::Held,
 
-            6 => Status::Canceled {
+            protocol::status::Status::Canceled => Status::Canceled {
                 machine: if let Some(protocol::status::Machineopt::Machine(machine)) =
                     status.machineopt
                 {
@@ -150,7 +150,7 @@ impl From<protocol::Status> for Status {
                 },
             },
 
-            7 => {
+            protocol::status::Status::Failed => {
                 let protocol::status::Erroropt::Error(error) = status.erroropt.unwrap();
 
                 Status::Failed {
@@ -164,8 +164,6 @@ impl From<protocol::Status> for Status {
                     error,
                 }
             }
-
-            _ => Status::Unknown { machine: None },
         }
     }
 }
