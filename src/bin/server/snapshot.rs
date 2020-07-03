@@ -15,7 +15,7 @@ mod serialize {
 
     use expjobserver::{deserialize_ts, serialize_ts};
 
-    use log::info;
+    use log::trace;
 
     include!(concat!(env!("OUT_DIR"), "/state_snapshot.rs"));
 
@@ -154,7 +154,7 @@ mod serialize {
                 done_timestamp: task.done_timestamp.map(serialize_ts),
             };
 
-            info!("Serialize: {:?}", st);
+            trace!("Serialize: {:?}", st);
 
             st
         }
