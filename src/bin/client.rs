@@ -1086,7 +1086,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                     cmd.truncate(TRUNC);
                 }
                 let status = format!(
-                    "Done in {}",
+                    "Done ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
                 );
                 table.add_row(row![b->jid, Fm->status, class, cmd, machine, ""]);
@@ -1111,7 +1111,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 }
                 let path = if is_long { path } else { "Ready".into() };
                 let status = format!(
-                    "Done in {}",
+                    "Done ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
                 );
                 table.add_row(row![b->jid, Fg->status, class, cmd, machine, Fg->path]);
@@ -1131,7 +1131,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                     cmd.truncate(TRUNC);
                 }
                 let status = format!(
-                    "Failed in {}",
+                    "Failed ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
                 );
                 table.add_row(row![b->jid, Frbu->status, class, cmd,
