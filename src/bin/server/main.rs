@@ -1409,17 +1409,57 @@ impl Server {
                         // HACK: assume all machine names are in the form HOSTNAME:PORT.
                         let machine_ip = machine.split(":").next().unwrap();
 
-                        let rsync_result = std::process::Command::new("rsync")
-                            .arg("-az")
-                            .arg(&format!("{}:{}", machine_ip, results_path))
-                            .arg(cp_results)
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::null())
-                            .output();
+                        // We retry copying a few times.
+                        const COPY_RETRIES: usize = 3;
+                        for _ in 0..COPY_RETRIES {
+                            // Sometimes the command will hang spuriously. So we give it a timeout and
+                            // restart if needed.
+                            const RSYNC_TIMEOUT: &str = "3h";
+                            let rsync_result = std::process::Command::new("timeout")
+                                .arg(RSYNC_TIMEOUT)
+                                .arg("rsync")
+                                .arg("-z")
+                                .arg(&format!("{}:{}", machine_ip, results_path))
+                                .arg(&cp_results)
+                                .output();
 
-                        match rsync_result {
-                            Ok(..) => info!("Finished copying results for job {}.", jid),
-                            Err(e) => error!("Error copy results for job {}: {}", jid, e),
+                            match rsync_result {
+                                Ok(out) if out.status.success() => {
+                                    info!(
+                                        "Finished copying results for job {}.\n\
+                                         rsync stdout: {}\n\
+                                         rsync stderr: {}",
+                                        jid,
+                                        String::from_utf8_lossy(&out.stdout),
+                                        String::from_utf8_lossy(&out.stderr)
+                                    );
+
+                                    // Done copying
+                                    break;
+                                }
+                                Ok(out)
+                                    if out.status.code().is_some()
+                                        && out.status.code().unwrap() == 124 =>
+                                {
+                                    warn!(
+                                        "Copying results for job {} timed out.\n\
+                                         rsync stdout: {}\n\
+                                         rsync stderr: {}",
+                                        jid,
+                                        String::from_utf8_lossy(&out.stdout),
+                                        String::from_utf8_lossy(&out.stderr)
+                                    )
+                                }
+                                Ok(out) => warn!(
+                                    "Copying results for job {} failed.\n\
+                                     rsync stdout: {}\n\
+                                     rsync stderr: {}",
+                                    jid,
+                                    String::from_utf8_lossy(&out.stdout),
+                                    String::from_utf8_lossy(&out.stderr)
+                                ),
+                                Err(e) => error!("Error copy results for job {}: {}", jid, e),
+                            }
                         }
 
                         // Indicate we are done.
