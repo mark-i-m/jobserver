@@ -223,11 +223,21 @@ fn build_cli() -> clap::App<'static, 'static> {
                         .takes_value(true)
                         .help("A file with one IP:PORT per line"),
                 )
-                .group(
-                    ArgGroup::with_name("MACHINES")
-                        .required(true)
-                        .args(&["ADDR", "ADDR_FILE"]),
+                .arg(
+                    Arg::with_name("EXISTING")
+                        .short("e")
+                        .long("existing")
+                        .requires("CLASS")
+                        .help(
+                            "Re-setup machines of the given class, \
+                             rather than setting up new machines.",
+                        ),
                 )
+                .group(ArgGroup::with_name("MACHINES").required(true).args(&[
+                    "ADDR",
+                    "ADDR_FILE",
+                    "EXISTING",
+                ]))
                 .arg(
                     Arg::with_name("CMD")
                         .required(true)
@@ -236,6 +246,7 @@ fn build_cli() -> clap::App<'static, 'static> {
                 )
                 .arg(
                     Arg::with_name("CLASS")
+                        .short("c")
                         .long("class")
                         .takes_value(true)
                         .help("If passed, the machine is added to the class after setup."),
@@ -506,6 +517,12 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     .expect("unable to read address file")
                     .split_whitespace()
                     .map(|line| line.trim().to_owned())
+                    .collect()
+            } else if sub_m.is_present("EXISTING") {
+                let class = sub_m.value_of("CLASS").unwrap();
+                list_avail(addr, vec![])
+                    .into_iter()
+                    .filter_map(|m| if m.class == class { Some(m.addr) } else { None })
                     .collect()
             } else {
                 unreachable!();
