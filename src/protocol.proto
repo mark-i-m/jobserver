@@ -210,6 +210,8 @@ message JobStatusResp {
     map<string, string> variables = 5;
     // The path to the job log. This will be `/dev/null` if the job has not started yet.
     string log = 6;
+    // The path to which results should be copied, or "" if none.
+    string cp_results = 9;
 
     string timestamp = 7;
     oneof donetsop {

@@ -391,6 +391,13 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "Pass the log path to `tail -f`")
             )
 
+            (@subcommand results =>
+                (about: "List the results path for each job.")
+                (@setting ArgRequiredElseHelp)
+                (@arg JID: +required {is_usize} ...
+                 "The job ID of the job")
+            )
+
             (@subcommand matrix =>
                 (about: "Operations with job matrices")
                 (@setting SubcommandRequiredElseHelp)
@@ -727,6 +734,41 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             }
         }
 
+        ("results", Some(sub_m)) => {
+            let mut jids = sub_m
+                .values_of("JID")
+                .unwrap()
+                .into_iter()
+                .map(|a| Jid::from(a))
+                .collect();
+            let job_info = stat_jobs(addr, &mut jids);
+
+            for job in job_info {
+                use std::path::PathBuf;
+
+                match job {
+                    JobInfo {
+                        status:
+                            Status::Done {
+                                output: Some(output),
+                                ..
+                            },
+                        cp_results,
+                        ..
+                    } => {
+                        let path = PathBuf::from(cp_results)
+                            .join(PathBuf::from(output).file_name().unwrap().to_str().unwrap());
+
+                        println!("{}", path.display());
+                    }
+
+                    _ => {
+                        println!("No output for job {}", job.jid);
+                    }
+                }
+            }
+        }
+
         ("matrix", Some(sub_m)) => handle_matrix_cmd(addr, sub_m),
 
         _ => unreachable!(),
@@ -861,6 +903,7 @@ struct JobInfo {
     jid: Jid,
     status: Status,
     variables: HashMap<String, String>,
+    cp_results: String,
     timestamp: DateTime<Utc>,
     done_timestamp: Option<DateTime<Utc>>,
 }
@@ -917,6 +960,7 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
                 timestamp,
                 donetsop,
                 log: _,
+                cp_results,
             }) = status
             {
                 let status = Status::from(status.expect("Status is unexpectedly missing"));
@@ -926,6 +970,7 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
                     jid: Jid::new(jid),
                     status,
                     variables,
+                    cp_results,
                     timestamp: deserialize_ts(timestamp),
                     done_timestamp: donetsop.map(
                         |protocol::job_status_resp::Donetsop::DoneTimestamp(ts)| deserialize_ts(ts),

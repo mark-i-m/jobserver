@@ -679,6 +679,12 @@ impl Server {
                                 donetsop: task.unwrap().done_timestamp.map(serialize_ts).map(
                                     |ts| protocol::job_status_resp::Donetsop::DoneTimestamp(ts),
                                 ),
+                                cp_results: task
+                                    .unwrap()
+                                    .cp_results
+                                    .as_ref()
+                                    .map(Clone::clone)
+                                    .unwrap_or_else(|| "".into()),
                             })
                         }
 
@@ -732,6 +738,12 @@ impl Server {
                                 donetsop: task.unwrap().done_timestamp.map(serialize_ts).map(
                                     |ts| protocol::job_status_resp::Donetsop::DoneTimestamp(ts),
                                 ),
+                                cp_results: task
+                                    .unwrap()
+                                    .cp_results
+                                    .as_ref()
+                                    .map(Clone::clone)
+                                    .unwrap_or_else(|| "".into()),
                             })
                         }
 
