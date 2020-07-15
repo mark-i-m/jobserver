@@ -413,6 +413,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                      "The location on this host to copy results to.")
                     (@arg VARIABLES: +takes_value +required ...
                      "A space-separated list of KEY=VALUE1,VALUE2,... pairs for replacing variables.")
+                    (@arg TIMES: -x --times +takes_value {is_usize}
+                     "(optional) the number of copies of each job to submit (default: 1)")
                 )
 
                 (@subcommand stat =>
@@ -797,7 +799,10 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 cp_resultsopt: sub_m
                     .value_of("CP_PATH")
                     .map(|s| protocol::add_matrix_request::CpResultsopt::CpResults(s.into())),
-                repeat: 1,
+                repeat: sub_m
+                    .value_of("TIMES")
+                    .map(|s| s.parse().unwrap())
+                    .unwrap_or(1),
             });
 
             let response = make_request(addr, req);
