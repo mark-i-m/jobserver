@@ -16,6 +16,7 @@ message SnapshotMachineStatus {
 
 message SnapshotTask {
     required uint64 jid = 1;
+    optional uint64 matrix = 13;
     required SnapshotTaskType ty = 2;
     optional string machine = 3;
     optional string class = 4;

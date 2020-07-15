@@ -209,6 +209,9 @@ message JobStatusResp {
     string class = 1;
     string cmd = 2;
     uint64 jid = 3;
+    oneof matrixidopt {
+        uint64 matrix = 10;
+    }
     Status status = 4;
     map<string, string> variables = 5;
     // The path to the job log. This will be `/dev/null` if the job has not started yet.

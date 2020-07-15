@@ -902,6 +902,7 @@ struct JobInfo {
     class: String,
     cmd: String,
     jid: Jid,
+    matrix: Option<u64>,
     status: Status,
     variables: HashMap<String, String>,
     cp_results: String,
@@ -956,6 +957,7 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
                 class,
                 cmd,
                 jid,
+                matrixidopt,
                 status,
                 variables,
                 timestamp,
@@ -969,6 +971,8 @@ fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
                     class,
                     cmd,
                     jid: Jid::new(jid),
+                    matrix: matrixidopt
+                        .map(|protocol::job_status_resp::Matrixidopt::Matrix(id)| id),
                     status,
                     variables,
                     cp_results,
@@ -1061,9 +1065,14 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
 
     // Query each job's status
     for job in jobs.into_iter() {
+        let jid = if let Some(matrix) = job.matrix {
+            format!("{}:{}", matrix, job.jid)
+        } else {
+            format!("{}", job.jid)
+        };
+
         match job {
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status: Status::Unknown { machine },
@@ -1081,7 +1090,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status: Status::Canceled { machine },
@@ -1100,7 +1108,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status: Status::Waiting,
@@ -1116,7 +1123,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status: Status::Held,
@@ -1132,7 +1138,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status:
@@ -1156,7 +1161,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status:
@@ -1181,7 +1185,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status: Status::Failed { error, machine },
@@ -1202,7 +1205,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status: Status::Running { machine },
@@ -1218,7 +1220,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                jid,
                 mut cmd,
                 class,
                 status: Status::CopyResults { machine },

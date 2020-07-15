@@ -25,6 +25,7 @@ mod serialize {
 
             Task {
                 jid: self.jid,
+                matrix: self.matrix,
                 ty: match self.ty() {
                     SnapshotTaskType::Job => TaskType::Job,
                     SnapshotTaskType::SetupTask => TaskType::SetupTask,
@@ -141,6 +142,7 @@ mod serialize {
 
             let st = SnapshotTask {
                 jid: task.jid,
+                matrix: task.matrix,
                 ty,
                 machine: task.machine.clone(),
                 class: task.class.clone(),

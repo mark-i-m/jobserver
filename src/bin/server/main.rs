@@ -126,8 +126,11 @@ enum TaskState {
 /// what the status of the task is and has all information to do the next thing when ready.
 #[derive(Clone, Debug)]
 struct Task {
-    /// The tasks's ID.
+    /// The task's ID.
     jid: u64,
+
+    /// The task's matrix ID, if any.
+    matrix: Option<u64>,
 
     /// The type of the task (a job or setup task).
     ty: TaskType,
@@ -508,6 +511,7 @@ impl Server {
                         jid,
                         Task {
                             jid,
+                            matrix: None,
                             ty: TaskType::SetupTask,
                             cmds,
                             class,
@@ -564,6 +568,7 @@ impl Server {
                         jid,
                         Task {
                             jid,
+                            matrix: None,
                             ty: TaskType::Job,
                             cmds: vec![cmd],
                             class: Some(class),
@@ -670,6 +675,10 @@ impl Server {
 
                             Jsresp(protocol::JobStatusResp {
                                 jid: *jid,
+                                matrixidopt: task
+                                    .unwrap()
+                                    .matrix
+                                    .map(|m| protocol::job_status_resp::Matrixidopt::Matrix(m)),
                                 class: class.as_ref().expect("No class for clone").clone(),
                                 cmd: cmds.first().unwrap().clone(),
                                 status: Some(task.unwrap().status()),
@@ -729,6 +738,10 @@ impl Server {
 
                             Jsresp(protocol::JobStatusResp {
                                 jid: *jid,
+                                matrixidopt: task
+                                    .unwrap()
+                                    .matrix
+                                    .map(|m| protocol::job_status_resp::Matrixidopt::Matrix(m)),
                                 class: class.as_ref().map(Clone::clone).unwrap_or("".into()),
                                 cmd,
                                 status: Some(task.unwrap().status()),
@@ -778,8 +791,19 @@ impl Server {
                         ) => {
                             let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
                             let task = Self::clone_task(new_jid, task);
+                            let maybe_matrix = task.matrix.clone();
 
                             locked_jobs.insert(new_jid, task);
+
+                            if let Some(matrix) = maybe_matrix {
+                                self.matrices
+                                    .lock()
+                                    .unwrap()
+                                    .get_mut(&matrix)
+                                    .unwrap()
+                                    .jids
+                                    .push(new_jid);
+                            }
 
                             Jiresp(protocol::JobIdResp { jid: new_jid })
                         }
@@ -846,6 +870,7 @@ impl Server {
                                 jid,
                                 Task {
                                     jid,
+                                    matrix: Some(id),
                                     ty: TaskType::Job,
                                     cmds: vec![cmd.clone()],
                                     class: Some(class.clone()),
@@ -994,8 +1019,19 @@ impl Server {
                     // unwrap ok, already checked in `try_drive_sm`
                     let old_task = locked_tasks.get(&jid).unwrap();
                     let task = Self::clone_task(new_jid, old_task);
+                    let maybe_matrix = task.matrix.clone();
 
                     locked_tasks.insert(new_jid, task);
+
+                    if let Some(matrix) = maybe_matrix {
+                        self.matrices
+                            .lock()
+                            .unwrap()
+                            .get_mut(&matrix)
+                            .unwrap()
+                            .jids
+                            .push(new_jid);
+                    }
                 }
 
                 // drop locks
@@ -1014,6 +1050,7 @@ impl Server {
         match task {
             Task {
                 jid,
+                matrix,
                 ty: TaskType::Job,
                 cmds,
                 class,
@@ -1035,6 +1072,7 @@ impl Server {
 
                 Task {
                     jid: new_jid,
+                    matrix: matrix.clone(),
                     ty: TaskType::Job,
                     cmds,
                     class,
@@ -1051,6 +1089,7 @@ impl Server {
 
             Task {
                 jid,
+                matrix: None,
                 ty: TaskType::SetupTask,
                 cmds,
                 class,
@@ -1075,6 +1114,7 @@ impl Server {
 
                 Task {
                     jid: new_jid,
+                    matrix: None,
                     ty: TaskType::SetupTask,
                     cmds,
                     class,
