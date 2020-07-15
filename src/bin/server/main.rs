@@ -852,7 +852,7 @@ impl Server {
                                 variables: config,
                                 machine: None,
                                 canceled: None,
-                                repeat_on_fail: false,
+                                repeat_on_fail: true,
                                 timestamp: Utc::now(),
                                 done_timestamp: None,
                             },
