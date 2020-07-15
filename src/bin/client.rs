@@ -332,7 +332,7 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "Show only job IDs and commands")
                 (@arg N: -n +takes_value {is_usize} conflicts_with[JID]
                  "Show the last N jobs (default: 50)")
-                (@arg AFTER: -a --after +takes_value {is_usize} requires[JID]
+                (@arg AFTER: -a --after requires[JID]
                  "List all jobs after the highest given JID.")
             )
 
