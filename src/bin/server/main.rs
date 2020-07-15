@@ -855,12 +855,12 @@ impl Server {
 
                     // Create a new job for every element in the cartesian product of the variables.
                     for config in cartesian_product(&vars) {
-                        let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
-                        jids.push(jid);
-
                         let cmd = cmd_replace_vars(&cmd, &config);
 
                         for _ in 0..repeat {
+                            let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+                            jids.push(jid);
+
                             info!(
                                 "[Matrix {}] Added job {} with class {}: {}",
                                 id, jid, class, cmd
