@@ -1077,7 +1077,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
         }
     }
     println!(
-        "{} jobs: {} waiting, {} running, {} done, {} failed, {} canceled, {} unknown",
+        "{} jobs: {} waiting, {} running, {} done, {} failed, {} canceled, {} unknown\n",
         total_jobs, waiting_jobs, running_jobs, done_jobs, failed_jobs, canceled_jobs, unknown_jobs
     );
 
