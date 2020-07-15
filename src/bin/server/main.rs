@@ -804,6 +804,7 @@ impl Server {
                     cmd,
                     class,
                     cp_resultsopt,
+                    repeat,
                 }) => {
                     let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -835,28 +836,30 @@ impl Server {
 
                         let cmd = cmd_replace_vars(&cmd, &config);
 
-                        info!(
-                            "[Matrix {}] Added job {} with class {}: {}",
-                            id, jid, class, cmd
-                        );
+                        for _ in 0..repeat {
+                            info!(
+                                "[Matrix {}] Added job {} with class {}: {}",
+                                id, jid, class, cmd
+                            );
 
-                        self.tasks.lock().unwrap().insert(
-                            jid,
-                            Task {
+                            self.tasks.lock().unwrap().insert(
                                 jid,
-                                ty: TaskType::Job,
-                                cmds: vec![cmd],
-                                class: Some(class.clone()),
-                                cp_results: cp_results.clone(),
-                                state: TaskState::Waiting,
-                                variables: config,
-                                machine: None,
-                                canceled: None,
-                                repeat_on_fail: true,
-                                timestamp: Utc::now(),
-                                done_timestamp: None,
-                            },
-                        );
+                                Task {
+                                    jid,
+                                    ty: TaskType::Job,
+                                    cmds: vec![cmd.clone()],
+                                    class: Some(class.clone()),
+                                    cp_results: cp_results.clone(),
+                                    state: TaskState::Waiting,
+                                    variables: config.clone(),
+                                    machine: None,
+                                    canceled: None,
+                                    repeat_on_fail: true,
+                                    timestamp: Utc::now(),
+                                    done_timestamp: None,
+                                },
+                            );
+                        }
                     }
 
                     self.matrices.lock().unwrap().insert(

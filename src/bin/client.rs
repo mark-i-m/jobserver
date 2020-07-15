@@ -797,6 +797,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 cp_resultsopt: sub_m
                     .value_of("CP_PATH")
                     .map(|s| protocol::add_matrix_request::CpResultsopt::CpResults(s.into())),
+                repeat: 1,
             });
 
             let response = make_request(addr, req);

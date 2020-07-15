@@ -162,6 +162,9 @@ message AddMatrixRequest {
     oneof cp_resultsopt {
         string cp_results = 4;
     }
+
+    // The number of times to run each task.
+    uint64 repeat = 5;
 }
 
 message StatMatrixRequest {
