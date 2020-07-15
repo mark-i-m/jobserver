@@ -1057,6 +1057,30 @@ fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
 }
 
 fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
+    // Compute and print some summary stats.
+    let mut total_jobs = 0;
+    let mut running_jobs = 0;
+    let mut failed_jobs = 0;
+    let mut done_jobs = 0;
+    let mut waiting_jobs = 0;
+    let mut canceled_jobs = 0;
+    let mut unknown_jobs = 0;
+    for job in jobs.iter() {
+        total_jobs += 1;
+        match job.status {
+            Status::Running { .. } | Status::CopyResults { .. } => running_jobs += 1,
+            Status::Unknown { .. } => unknown_jobs += 1,
+            Status::Canceled { .. } => canceled_jobs += 1,
+            Status::Waiting | Status::Held => waiting_jobs += 1,
+            Status::Done { .. } => done_jobs += 1,
+            Status::Failed { .. } => failed_jobs += 1,
+        }
+    }
+    println!(
+        "{} jobs: {} waiting, {} running, {} done, {} failed, {} canceled, {} unknown",
+        total_jobs, waiting_jobs, running_jobs, done_jobs, failed_jobs, canceled_jobs, unknown_jobs
+    );
+
     // Print a nice human-readable table
     let mut table = Table::new();
 
