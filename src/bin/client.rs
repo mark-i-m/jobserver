@@ -332,6 +332,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "Show only job IDs and commands")
                 (@arg N: -n +takes_value {is_usize} conflicts_with[JID]
                  "Show the last N jobs (default: 50)")
+                (@arg AFTER: -a --after +takes_value {is_usize} requires[JID]
+                 "List all jobs after the highest given JID.")
             )
 
             (@subcommand rm =>
@@ -588,9 +590,16 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(DEFAULT_LS_N);
             let is_cmd = sub_m.is_present("CMD");
+            let is_after = sub_m.is_present("AFTER");
             let jids = sub_m
                 .values_of("JID")
-                .map(|v| JobListMode::Jids(v.map(Jid::from).collect()))
+                .map(|v| {
+                    if is_after {
+                        JobListMode::After(v.map(Jid::from).max().unwrap())
+                    } else {
+                        JobListMode::Jids(v.map(Jid::from).collect())
+                    }
+                })
                 .unwrap_or(JobListMode::Suffix(suffix));
             let jobs = list_jobs(addr, jids);
             print_jobs(jobs, is_long, is_cmd);
@@ -922,6 +931,9 @@ enum JobListMode {
     /// List a suffix of jobs (the `usize` is the length of the suffix).
     Suffix(usize),
 
+    /// List all jobs starting with the given one.
+    After(Jid),
+
     /// List only JIDs in the set.
     Jids(BTreeSet<Jid>),
 }
@@ -940,6 +952,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobInfo> {
                 .filter(|(i, j)| match mode {
                     JobListMode::All => true,
                     JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
+                    JobListMode::After(jid) => *j >= jid,
                     JobListMode::Jids(ref jids) => jids.contains(j),
                 })
                 .map(|(_, j)| j)
