@@ -1,6 +1,6 @@
 //! A thread that copies results back to the host machine and notifies the server of completion.
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
 use std::collections::{HashMap, HashSet, LinkedList};
 use std::sync::{Arc, Mutex};
@@ -219,14 +219,18 @@ fn start_copy(
 
     // Sometimes the command will hang spuriously. So we give it a timeout and
     // restart if needed.
-    let process = std::process::Command::new("rsync")
+    let mut cmd = std::process::Command::new("rsync");
+    let cmd = cmd
         .arg("-vzP")
         .arg("--rsh=ssh")
         .arg(&format!("{}:{}", machine_ip, results_path))
         .arg(&cp_results)
         .stdout(std::process::Stdio::from(log))
-        .stderr(std::process::Stdio::from(log_err))
-        .spawn()?;
+        .stderr(std::process::Stdio::from(log_err));
+
+    debug!("{:?}", cmd);
+
+    let process = cmd.spawn()?;
 
     Ok(ResultsInfo {
         jid,
