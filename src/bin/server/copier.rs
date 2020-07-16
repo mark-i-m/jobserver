@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 const RSYNC_TIMEOUT: u64 = 2 * 60;
 /// The number of times to retry before giving up.
 const RETRIES: usize = 3;
+/// A little log directory for rsync... not ideal, but better than nothing.
+const RSYNC_LOG_PATH: &str = "/tmp/jobserver-rsync.log";
 
 /// (jid, machine, from_path, to_path, attempt)
 pub type CopyJobInfo = (u64, String, String, String, usize);
@@ -207,12 +209,23 @@ fn start_copy(
     // HACK: assume all machine names are in the form HOSTNAME:PORT.
     let machine_ip = machine.split(":").next().unwrap();
 
+    let log = std::fs::OpenOptions::new()
+        .truncate(false)
+        .create(true)
+        .write(true)
+        .open(RSYNC_LOG_PATH)
+        .expect("Unable to open rsync log file.");
+    let log_err = log.try_clone().expect("Unable to open rsync log err file.");
+
     // Sometimes the command will hang spuriously. So we give it a timeout and
     // restart if needed.
     let process = std::process::Command::new("rsync")
-        .arg("-z")
+        .arg("-vzP")
+        .arg("--rsh=ssh")
         .arg(&format!("{}:{}", machine_ip, results_path))
         .arg(&cp_results)
+        .stdout(std::process::Stdio::from(log))
+        .stderr(std::process::Stdio::from(log_err))
         .spawn()?;
 
     Ok(ResultsInfo {
