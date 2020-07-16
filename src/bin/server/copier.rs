@@ -14,8 +14,16 @@ const RETRIES: usize = 3;
 const RSYNC_LOG_PATH: &str = "/tmp/jobserver-rsync.log";
 
 /// (jid, machine, from_path, to_path, attempt)
-pub type CopyJobInfo = (u64, String, String, String, usize);
 pub type CopierThreadQueue = LinkedList<CopyJobInfo>;
+
+#[derive(Clone, Debug)]
+pub struct CopyJobInfo {
+    pub jid: u64,
+    pub machine: String,
+    pub from: String,
+    pub to: String,
+    pub attempt: usize,
+}
 
 /// Internal state of the copier thread. This basically just keeps track of in-flight copies.
 #[derive(Debug)]
@@ -86,7 +94,7 @@ fn copier_thread(mut state: CopierThreadState) {
     loop {
         // Check for new tasks to start.
         while let Some(new) = state.incoming.lock().unwrap().pop_front() {
-            let jid = new.0;
+            let jid = new.jid;
 
             // If there is an existing task, kill it.
             if let Some(mut old) = state.ongoing.remove(&jid) {
@@ -128,13 +136,13 @@ fn copier_thread(mut state: CopierThreadState) {
 
                     // Maybe retry.
                     if results_info.attempt < RETRIES {
-                        state.incoming.lock().unwrap().push_back((
-                            results_info.jid,
-                            results_info.machine.clone(),
-                            results_info.from.clone(),
-                            results_info.to.clone(),
-                            results_info.attempt + 1,
-                        ));
+                        state.incoming.lock().unwrap().push_back(CopyJobInfo {
+                            jid: results_info.jid,
+                            machine: results_info.machine.clone(),
+                            from: results_info.from.clone(),
+                            to: results_info.to.clone(),
+                            attempt: results_info.attempt + 1,
+                        });
                     } else {
                         error!(
                             "Copying results for job {} failed after {} attempts.",
@@ -149,13 +157,13 @@ fn copier_thread(mut state: CopierThreadState) {
 
                     // Maybe retry.
                     if results_info.attempt < RETRIES {
-                        state.incoming.lock().unwrap().push_back((
-                            results_info.jid,
-                            results_info.machine.clone(),
-                            results_info.from.clone(),
-                            results_info.to.clone(),
-                            results_info.attempt + 1,
-                        ));
+                        state.incoming.lock().unwrap().push_back(CopyJobInfo {
+                            jid: results_info.jid,
+                            machine: results_info.machine.clone(),
+                            from: results_info.from.clone(),
+                            to: results_info.to.clone(),
+                            attempt: results_info.attempt + 1,
+                        });
                     } else {
                         error!(
                             "Copying results for job {} failed after {} attempts.",
@@ -173,13 +181,13 @@ fn copier_thread(mut state: CopierThreadState) {
                     if timed_out {
                         warn!("Copying results for job {} timed out.", jid,);
                         if results_info.attempt < RETRIES {
-                            state.incoming.lock().unwrap().push_back((
-                                results_info.jid,
-                                results_info.machine.clone(),
-                                results_info.from.clone(),
-                                results_info.to.clone(),
-                                results_info.attempt + 1,
-                            ));
+                            state.incoming.lock().unwrap().push_back(CopyJobInfo {
+                                jid: results_info.jid,
+                                machine: results_info.machine.clone(),
+                                from: results_info.from.clone(),
+                                to: results_info.to.clone(),
+                                attempt: results_info.attempt + 1,
+                            });
                         } else {
                             error!(
                                 "Copying results for job {} failed after {} attempts.",
@@ -201,10 +209,16 @@ fn copier_thread(mut state: CopierThreadState) {
 
 /// Start copying some results.
 fn start_copy(
-    (jid, machine, results_path, cp_results, attempt): CopyJobInfo,
+    CopyJobInfo {
+        jid,
+        machine,
+        from,
+        to,
+        attempt,
+    }: CopyJobInfo,
 ) -> Result<ResultsInfo, std::io::Error> {
     // Copy via rsync
-    info!("Copying results (job {}) to {}", jid, cp_results);
+    info!("Copying results (job {}) to {}", jid, to);
 
     // HACK: assume all machine names are in the form HOSTNAME:PORT.
     let machine_ip = machine.split(":").next().unwrap();
@@ -223,8 +237,8 @@ fn start_copy(
     let cmd = cmd
         .arg("-vzP")
         .arg("--rsh=ssh")
-        .arg(&format!("{}:{}", machine_ip, results_path))
-        .arg(&cp_results)
+        .arg(&format!("{}:{}", machine_ip, from))
+        .arg(&to)
         .stdout(std::process::Stdio::from(log))
         .stderr(std::process::Stdio::from(log_err));
 
@@ -235,8 +249,8 @@ fn start_copy(
     Ok(ResultsInfo {
         jid,
         machine,
-        from: results_path,
-        to: cp_results,
+        from,
+        to,
         process,
         start_time: std::time::Instant::now(),
         attempt,

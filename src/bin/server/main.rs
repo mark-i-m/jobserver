@@ -1460,7 +1460,13 @@ impl Server {
 
                 copier::copy(
                     copy_thread_queue,
-                    (jid, machine, cp_results.clone(), results_path.clone(), 0),
+                    copier::CopyJobInfo {
+                        jid,
+                        machine,
+                        to: cp_results.clone(),
+                        from: results_path.clone(),
+                        attempt: 0,
+                    },
                 );
 
                 task.update_state(TaskState::CopyingResults {
