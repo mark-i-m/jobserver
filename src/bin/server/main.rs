@@ -30,6 +30,7 @@ use log::{debug, error, info, warn};
 
 use prost::Message;
 
+mod copier;
 mod snapshot;
 
 /// The name of the file in the `log_dir` that a snapshot is stored at.
@@ -959,6 +960,7 @@ impl Server {
         let mut to_remove = HashSet::new();
         let mut to_clone = HashSet::new(); // failed tasks we need to clone
         let copying_flags = Arc::new(Mutex::new(HashSet::new()));
+        let (_copier_thread, copy_thread_queue) = copier::init(Arc::clone(&copying_flags));
 
         // We keep track of whether any task had a state change. If there was, then there is
         // increased chance of another state change soon, so iterate with higher frequency.
@@ -1000,6 +1002,7 @@ impl Server {
                             &mut to_remove,
                             &mut to_clone,
                             copying_flags.clone(),
+                            copy_thread_queue.clone(),
                         );
                 }
 
@@ -1164,6 +1167,7 @@ impl Server {
         to_remove: &mut HashSet<u64>,
         to_clone: &mut HashSet<u64>,
         copying_flags: Arc<Mutex<HashSet<u64>>>,
+        copy_thread_queue: Arc<Mutex<copier::CopierThreadQueue>>,
     ) -> bool {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
         // so it can get garbage collected.
@@ -1201,7 +1205,7 @@ impl Server {
                 task,
                 machines,
                 running_job_handles,
-                copying_flags,
+                copy_thread_queue,
                 log_dir,
             ),
 
@@ -1424,7 +1428,7 @@ impl Server {
         task: &mut Task,
         _machines: &mut HashMap<String, MachineStatus>,
         _running_job_handles: &mut HashMap<u64, JobProcessInfo>,
-        copying_flags: Arc<Mutex<HashSet<u64>>>,
+        copy_thread_queue: Arc<Mutex<copier::CopierThreadQueue>>,
         log_dir: &str,
     ) -> bool {
         // Look through the stdout for the "RESULTS: " line to get the results path.
@@ -1452,75 +1456,12 @@ impl Server {
         // If there is such a path, then spawn a thread to copy the file to this machine
         match (&task.cp_results, &results_path) {
             (Some(cp_results), Some(results_path)) => {
-                {
-                    let machine = task.machine.as_ref().unwrap().clone();
-                    let cp_results = cp_results.clone();
-                    let results_path = results_path.clone();
+                let machine = task.machine.as_ref().unwrap().clone();
 
-                    std::thread::spawn(move || {
-                        // Copy via rsync
-                        info!("Copying results (job {}) to {}", jid, cp_results);
-
-                        // HACK: assume all machine names are in the form HOSTNAME:PORT.
-                        let machine_ip = machine.split(":").next().unwrap();
-
-                        // We retry copying a few times.
-                        const COPY_RETRIES: usize = 3;
-                        for _ in 0..COPY_RETRIES {
-                            // Sometimes the command will hang spuriously. So we give it a timeout and
-                            // restart if needed.
-                            const RSYNC_TIMEOUT: &str = "3h";
-                            let rsync_result = std::process::Command::new("timeout")
-                                .arg(RSYNC_TIMEOUT)
-                                .arg("rsync")
-                                .arg("-z")
-                                .arg(&format!("{}:{}", machine_ip, results_path))
-                                .arg(&cp_results)
-                                .output();
-
-                            match rsync_result {
-                                Ok(out) if out.status.success() => {
-                                    info!(
-                                        "Finished copying results for job {}.\n\
-                                         rsync stdout: {}\n\
-                                         rsync stderr: {}",
-                                        jid,
-                                        String::from_utf8_lossy(&out.stdout),
-                                        String::from_utf8_lossy(&out.stderr)
-                                    );
-
-                                    // Done copying
-                                    break;
-                                }
-                                Ok(out)
-                                    if out.status.code().is_some()
-                                        && out.status.code().unwrap() == 124 =>
-                                {
-                                    warn!(
-                                        "Copying results for job {} timed out.\n\
-                                         rsync stdout: {}\n\
-                                         rsync stderr: {}",
-                                        jid,
-                                        String::from_utf8_lossy(&out.stdout),
-                                        String::from_utf8_lossy(&out.stderr)
-                                    )
-                                }
-                                Ok(out) => warn!(
-                                    "Copying results for job {} failed.\n\
-                                     rsync stdout: {}\n\
-                                     rsync stderr: {}",
-                                    jid,
-                                    String::from_utf8_lossy(&out.stdout),
-                                    String::from_utf8_lossy(&out.stderr)
-                                ),
-                                Err(e) => error!("Error copy results for job {}: {}", jid, e),
-                            }
-                        }
-
-                        // Indicate we are done.
-                        copying_flags.lock().unwrap().insert(jid);
-                    });
-                }
+                copier::copy(
+                    copy_thread_queue,
+                    (jid, machine, cp_results.clone(), results_path.clone(), 0),
+                );
 
                 task.update_state(TaskState::CopyingResults {
                     results_path: results_path.clone(),
