@@ -92,6 +92,9 @@ pub fn copy(queue: Arc<Mutex<CopierThreadQueue>>, task: CopyJobInfo) {
 fn copier_thread(mut state: CopierThreadState) {
     // We loop around checking on various tasks.
     loop {
+        // Sleep a bit. This prevents wasted CPU and hogging locks.
+        std::thread::sleep(Duration::from_secs(1));
+
         // Check for new tasks to start.
         while let Some(new) = state.incoming.lock().unwrap().pop_front() {
             let jid = new.jid;
