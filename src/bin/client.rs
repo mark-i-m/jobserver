@@ -326,14 +326,12 @@ fn build_cli() -> clap::App<'static, 'static> {
                 (@arg JID: {is_usize} ... conflicts_with[N]
                  "The job IDs of the jobs to list. Unknown job IDs are ignored. \
                   List all jobs if omitted.")
-                (@arg LONG: --long conflicts_with[CMD]
-                 "Show all output")
-                (@arg CMD: --commands conflicts_with[LONG]
-                 "Show only job IDs and commands")
                 (@arg N: -n +takes_value {is_usize} conflicts_with[JID]
                  "Show the last N jobs (default: 50)")
                 (@arg AFTER: -a --after requires[JID]
                  "List all jobs after the highest given JID.")
+                (@arg OUTPUT: --output
+                 "Show full output paths.")
             )
 
             (@subcommand rm =>
@@ -424,12 +422,8 @@ fn build_cli() -> clap::App<'static, 'static> {
                     (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
                      "The matrix ID of the matrix")
-                    (@group DISPLAY =>
-                        (@arg LONG: --long
-                         "Show all output")
-                        (@arg CMD: --commands
-                         "Show only job IDs and commands")
-                    )
+                    (@arg OUTPUT: --output
+                     "Show full output paths.")
                 )
 
                 (@subcommand csv =>
@@ -584,13 +578,12 @@ fn handle_var_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(sub_m)) => {
-            let is_long = sub_m.is_present("LONG");
             let suffix = sub_m
                 .value_of("N")
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(DEFAULT_LS_N);
-            let is_cmd = sub_m.is_present("CMD");
             let is_after = sub_m.is_present("AFTER");
+            let show_output = sub_m.is_present("OUTPUT");
             let jids = sub_m
                 .values_of("JID")
                 .map(|v| {
@@ -602,7 +595,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 })
                 .unwrap_or(JobListMode::Suffix(suffix));
             let jobs = list_jobs(addr, jids);
-            print_jobs(jobs, is_long, is_cmd);
+            print_jobs(jobs, show_output);
         }
 
         ("stat", Some(sub_m)) => {
@@ -819,8 +812,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("stat", Some(sub_m)) => {
-            let is_long = sub_m.is_present("LONG");
-            let is_cmd = sub_m.is_present("CMD");
+            let show_output = sub_m.is_present("OUTPUT");
 
             let response = make_request(
                 addr,
@@ -833,7 +825,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 Msresp(protocol::MatrixStatusResp { jobs, .. }) => {
                     let mut jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = stat_jobs(addr, &mut jobs);
-                    print_jobs(jobs, is_long, is_cmd);
+                    print_jobs(jobs, show_output);
                 }
                 _ => println!("Server response: {:#?}", response),
             }
@@ -1056,7 +1048,7 @@ fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
     }
 }
 
-fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
+fn print_jobs(jobs: Vec<JobInfo>, show_output: bool) {
     // Compute and print some summary stats.
     let mut total_jobs = 0;
     let mut running_jobs = 0;
@@ -1085,25 +1077,9 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
     let mut table = Table::new();
 
     table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
-
-    // If we only want command output...
-    if is_cmd {
-        table.set_titles(row![ Fwbu => "Job", "Command" ]);
-        for JobInfo { jid, cmd, .. } in jobs.into_iter() {
-            table.add_row(row![b->jid, cmd]);
-        }
-        table.printstd();
-
-        return;
-    }
-
-    // Full output
-
     table.set_titles(row![ Fwbu =>
         "Job", "Status", "Class", "Command", "Machine", "Output"
     ]);
-
-    const TRUNC: usize = 50;
 
     // Query each job's status
     for job in jobs.into_iter() {
@@ -1115,14 +1091,11 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
 
         match job {
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status: Status::Unknown { machine },
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let machine = if let Some(machine) = machine {
                     machine
                 } else {
@@ -1132,15 +1105,12 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status: Status::Canceled { machine },
                 variables: _variables,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let machine = if let Some(machine) = machine {
                     machine
                 } else {
@@ -1150,37 +1120,31 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status: Status::Waiting,
                 variables: _variables,
                 timestamp,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let status = format!("Waiting ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status: Status::Held,
                 variables: _variables,
                 timestamp,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let status = format!("Held ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status:
                     Status::Done {
@@ -1192,9 +1156,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 done_timestamp,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let status = format!(
                     "Done ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
@@ -1203,7 +1164,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status:
                     Status::Done {
@@ -1215,10 +1176,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 done_timestamp,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
-                let path = if is_long { path } else { "Ready".into() };
+                let path = if show_output { path } else { "Ready".into() };
                 let status = format!(
                     "Done ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
@@ -1227,7 +1185,7 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status: Status::Failed { error, machine },
                 variables: _variables,
@@ -1235,9 +1193,6 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
                 done_timestamp,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let status = format!(
                     "Failed ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
@@ -1247,31 +1202,25 @@ fn print_jobs(jobs: Vec<JobInfo>, is_long: bool, is_cmd: bool) {
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status: Status::Running { machine },
                 variables: _variables,
                 timestamp,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let status = format!("Running ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
 
             JobInfo {
-                mut cmd,
+                cmd,
                 class,
                 status: Status::CopyResults { machine },
                 variables: _variables,
                 timestamp,
                 ..
             } => {
-                if !is_long {
-                    cmd.truncate(TRUNC);
-                }
                 let status = format!("Copy Results ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
