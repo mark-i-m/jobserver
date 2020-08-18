@@ -480,12 +480,21 @@ impl Server {
                 }
 
                 Lareq(protocol::ListAvailableRequest {}) => Mresp(protocol::MachinesResp {
-                    machines: self
+                    machine_status: self
                         .machines
                         .lock()
                         .unwrap()
                         .iter()
-                        .map(|(addr, info)| (addr.clone(), info.class.clone()))
+                        .map(|(addr, info)| {
+                            (
+                                addr.clone(),
+                                protocol::MachineStatus {
+                                    class: info.class.clone(),
+                                    is_free: info.running.is_none(),
+                                    running_job: info.running.unwrap_or(0),
+                                },
+                            )
+                        })
                         .collect(),
                 }),
 
@@ -590,7 +599,29 @@ impl Server {
 
                 Ljreq(protocol::ListJobsRequest {}) => {
                     let tasks: Vec<_> = self.tasks.lock().unwrap().keys().map(|&k| k).collect();
-                    Jresp(protocol::JobsResp { jobs: tasks })
+                    let matrices: Vec<_> = self
+                        .matrices
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .map(|matrix| {
+                            let cp_resultsopt = matrix.cp_results.as_ref().map(|s| {
+                                protocol::matrix_status_resp::CpResultsopt::CpResults(s.into())
+                            });
+                            protocol::MatrixStatusResp {
+                                id: matrix.id,
+                                class: matrix.class.clone(),
+                                cp_resultsopt,
+                                cmd: matrix.cmd.clone(),
+                                jobs: matrix.jids.iter().map(|j| *j).collect(),
+                                variables: protocol::convert_map(&matrix.variables),
+                            }
+                        })
+                        .collect();
+                    Jresp(protocol::JobsResp {
+                        jobs: tasks,
+                        matrices,
+                    })
                     // drop locks
                 }
 

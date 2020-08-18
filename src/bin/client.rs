@@ -23,7 +23,7 @@ use prost::Message;
 
 const DEFAULT_LS_N: usize = 40;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Jid(u64);
 
 impl Jid {
@@ -54,6 +54,7 @@ impl std::fmt::Display for Jid {
     }
 }
 
+#[derive(Debug)]
 /// A more idiomatic version of `protocol::Status`.
 pub enum Status {
     /// The job is waiting to run.
@@ -507,8 +508,7 @@ fn generate_completions(shell: clap::Shell, outdir: &str, bin: Option<&str>) {
 fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(_sub_m)) => {
-            let jobs = list_jobs(addr, JobListMode::All);
-            let avail = list_avail(addr, jobs);
+            let avail = list_avail(addr);
             print_avail(avail);
         }
 
@@ -532,7 +532,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             }
 
             if let Some(class) = sub_m.value_of("CLASS") {
-                let addrs: Vec<String> = list_avail(addr, vec![])
+                let addrs: Vec<String> = list_avail(addr)
                     .into_iter()
                     .filter_map(|m| if m.class == class { Some(m.addr) } else { None })
                     .collect();
@@ -555,7 +555,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     .collect()
             } else if sub_m.is_present("EXISTING") {
                 let class = sub_m.value_of("CLASS").unwrap();
-                list_avail(addr, vec![])
+                list_avail(addr)
                     .into_iter()
                     .filter_map(|m| if m.class == class { Some(m.addr) } else { None })
                     .collect()
@@ -625,7 +625,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 })
                 .unwrap_or(JobListMode::Suffix(suffix));
             let jobs = list_jobs(addr, jids);
-            print_jobs(jobs, show_output);
+            print_jobs(jobs, show_output, true);
         }
 
         ("stat", Some(sub_m)) => {
@@ -668,6 +668,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             } else {
                 list_jobs(addr, JobListMode::All)
                     .into_iter()
+                    .map(|item| match item {
+                        JobOrMatrixInfo::Job(job) => job,
+                        _ => unreachable!(),
+                    })
                     .filter_map(|job| {
                         if let Status::Running { .. } = job.status {
                             Some(Jid::from(job.jid))
@@ -769,13 +773,15 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("results", Some(sub_m)) => {
-            let mut jids = sub_m
+            let jids = sub_m
                 .values_of("JID")
                 .unwrap()
                 .into_iter()
                 .map(|a| Jid::from(a))
                 .collect();
-            let job_info = stat_jobs(addr, &mut jids);
+
+            let job_info = list_jobs(addr, JobListMode::Jids(jids));
+            let job_info = job_info.into_iter().map(|job| job.expect_job());
 
             for job in job_info {
                 use std::path::PathBuf;
@@ -853,9 +859,9 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
             match response {
                 Msresp(protocol::MatrixStatusResp { jobs, .. }) => {
-                    let mut jobs = jobs.into_iter().map(Jid::new).collect();
-                    let jobs = stat_jobs(addr, &mut jobs);
-                    print_jobs(jobs, show_output);
+                    let jobs = jobs.into_iter().map(Jid::new).collect();
+                    let jobs = list_jobs(addr, JobListMode::Jids(jobs));
+                    print_jobs(jobs, show_output, false);
                 }
                 _ => println!("Server response: {:#?}", response),
             }
@@ -878,8 +884,9 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     variables,
                     ..
                 }) => {
-                    let mut jobs = jobs.into_iter().map(Jid::new).collect();
-                    let jobs = stat_jobs(addr, &mut jobs);
+                    let jobs = jobs.into_iter().map(Jid::new).collect();
+                    let jobs = list_jobs(addr, JobListMode::Jids(jobs));
+                    let jobs = jobs.into_iter().map(|job| job.expect_job()).collect();
                     make_matrix_csv(file, id, variables, jobs);
                 }
                 _ => println!("Server response: {:#?}", response),
@@ -934,6 +941,7 @@ fn make_request(
         .expect("Response is unexpectedly empty.")
 }
 
+#[derive(Debug)]
 struct JobInfo {
     class: String,
     cmd: String,
@@ -946,9 +954,33 @@ struct JobInfo {
     done_timestamp: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug)]
+struct MatrixInfoShallow {
+    class: String,
+    cmd: String,
+    id: Jid,
+    cp_results: Option<String>,
+    jobs: Vec<Jid>,
+    variables: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug)]
+struct MatrixInfo {
+    class: String,
+    cmd: String,
+    id: Jid,
+    cp_results: Option<String>,
+    jobs: Vec<JobInfo>,
+    variables: HashMap<String, Vec<String>>,
+}
+
 enum JobListMode {
     /// List all jobs
     All,
+
+    /// List all jobs in a flat way -- as `JobOrMatrixInfo::Job`. This useful when you just want to
+    /// iterate over all tasks.
+    Flat,
 
     /// List a suffix of jobs (the `usize` is the length of the suffix).
     Suffix(usize),
@@ -960,113 +992,190 @@ enum JobListMode {
     Jids(BTreeSet<Jid>),
 }
 
-fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobInfo> {
-    let job_ids = make_request(addr, Ljreq(protocol::ListJobsRequest {}));
+#[derive(Debug)]
+enum JobOrMatrixInfo {
+    Job(JobInfo),
+    Matrix(MatrixInfo),
+}
 
-    if let Jresp(protocol::JobsResp { jobs }) = job_ids {
-        let len = jobs.len();
-        stat_jobs(
-            addr,
-            &mut jobs
-                .into_iter()
-                .map(Jid::new)
-                .enumerate()
-                .filter(|(i, j)| match mode {
-                    JobListMode::All => true,
-                    JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
-                    JobListMode::After(jid) => *j >= jid,
-                    JobListMode::Jids(ref jids) => jids.contains(j),
-                })
-                .map(|(_, j)| j)
-                .collect(),
-        )
-    } else {
-        unreachable!();
+impl JobOrMatrixInfo {
+    pub fn expect_job(self) -> JobInfo {
+        match self {
+            JobOrMatrixInfo::Job(job_info) => job_info,
+            other => panic!("Expected job, got {:?}", other),
+        }
     }
 }
 
-fn stat_jobs(addr: &str, jids: &mut Vec<Jid>) -> Vec<JobInfo> {
-    // Sort by jid
-    jids.sort();
+fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
+    // Collect info about existing jobs and matrices.
+    let job_ids = make_request(addr, Ljreq(protocol::ListJobsRequest {}));
+    let (jids, mut matrices): (Vec<_>, HashMap<_, _>) = if let Jresp(protocol::JobsResp {
+        jobs,
+        matrices,
+    }) = job_ids
+    {
+        let matrices = matrices
+            .into_iter()
+            .map(
+                |protocol::MatrixStatusResp {
+                     cmd,
+                     class,
+                     id,
+                     jobs,
+                     variables,
+                     cp_resultsopt,
+                 }| {
+                    (
+                        Jid::new(id),
+                        MatrixInfoShallow {
+                            cmd,
+                            class,
+                            id: Jid::new(id),
+                            jobs: jobs.into_iter().map(Jid::new).collect(),
+                            cp_results: cp_resultsopt
+                                .map(|protocol::matrix_status_resp::CpResultsopt::CpResults(s)| s),
+                            variables: variables
+                                .into_iter()
+                                .map(|(var, protocol::MatrixVarValues { values })| (var, values))
+                                .collect(),
+                        },
+                    )
+                },
+            )
+            .collect();
 
-    jids.iter()
-        .filter_map(|jid| {
-            let status = make_request(addr, Jsreq(protocol::JobStatusRequest { jid: jid.jid() }));
+        let jobs = jobs.into_iter().map(Jid::new).collect();
 
-            if let Jsresp(protocol::JobStatusResp {
-                class,
-                cmd,
-                jid,
-                matrixidopt,
-                status,
-                variables,
-                timestamp,
-                donetsop,
-                log: _,
-                cp_results,
-            }) = status
-            {
-                let status = Status::from(status.expect("Status is unexpectedly missing"));
-                Some(JobInfo {
-                    class,
-                    cmd,
-                    jid: Jid::new(jid),
-                    matrix: matrixidopt
-                        .map(|protocol::job_status_resp::Matrixidopt::Matrix(id)| id),
-                    status,
-                    variables,
-                    cp_results,
-                    timestamp: deserialize_ts(timestamp),
-                    done_timestamp: donetsop.map(
-                        |protocol::job_status_resp::Donetsop::DoneTimestamp(ts)| deserialize_ts(ts),
-                    ),
-                })
+        (jobs, matrices)
+    } else {
+        unreachable!();
+    };
+
+    // Collate the infomation into a sorted list, and choose which ones to list further.
+    let sorted_ids = {
+        let mut ids: Vec<_> = jids
+            .iter()
+            .map(|k| *k)
+            .chain(matrices.keys().map(|k| *k))
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    let len = sorted_ids.len();
+    let selected_ids = sorted_ids
+        .into_iter()
+        .enumerate()
+        .filter(|(i, j)| match mode {
+            JobListMode::All | JobListMode::Flat => true,
+            JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
+            JobListMode::After(jid) => *j >= jid,
+            JobListMode::Jids(ref jids) => jids.contains(j),
+        });
+
+    let mut info = vec![];
+    for (_, id) in selected_ids {
+        if let Some(MatrixInfoShallow {
+            cmd,
+            class,
+            id,
+            jobs,
+            cp_results,
+            variables,
+        }) = matrices.remove(&id)
+        {
+            let matrix_job_info = jobs.into_iter().filter_map(|jid| stat_job(addr, jid));
+
+            if matches!(mode, JobListMode::Flat) {
+                for job_info in matrix_job_info {
+                    info.push(JobOrMatrixInfo::Job(job_info))
+                }
             } else {
-                println!("Unable to find job {}", jid);
-                None
+                info.push(JobOrMatrixInfo::Matrix(MatrixInfo {
+                    id,
+                    cmd,
+                    class,
+                    jobs: matrix_job_info.collect(),
+                    cp_results,
+                    variables,
+                }))
             }
+        } else if let Some(job_info) = stat_job(addr, id) {
+            info.push(JobOrMatrixInfo::Job(job_info))
+        }
+    }
+
+    info
+}
+
+fn stat_job(addr: &str, jid: Jid) -> Option<JobInfo> {
+    let status = make_request(addr, Jsreq(protocol::JobStatusRequest { jid: jid.jid() }));
+
+    if let Jsresp(protocol::JobStatusResp {
+        class,
+        cmd,
+        jid,
+        matrixidopt,
+        status,
+        variables,
+        timestamp,
+        donetsop,
+        log: _,
+        cp_results,
+    }) = status
+    {
+        let status = Status::from(status.expect("Status is unexpectedly missing"));
+        Some(JobInfo {
+            class,
+            cmd,
+            jid: Jid::new(jid),
+            matrix: matrixidopt.map(|protocol::job_status_resp::Matrixidopt::Matrix(id)| id),
+            status,
+            variables,
+            cp_results,
+            timestamp: deserialize_ts(timestamp),
+            done_timestamp: donetsop
+                .map(|protocol::job_status_resp::Donetsop::DoneTimestamp(ts)| deserialize_ts(ts)),
         })
-        .collect()
+    } else {
+        println!("Unable to find job {}", jid);
+        None
+    }
 }
 
 struct MachineInfo {
     addr: String,
     class: String,
-    running: Option<u64>,
+    running: Option<Jid>,
 }
 
-fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
+fn list_avail(addr: &str) -> Vec<MachineInfo> {
     let avail = make_request(addr, Lareq(protocol::ListAvailableRequest {}));
 
-    // Find out which jobs are running
-    let mut running_jobs = HashMap::new();
-    for job in jobs.into_iter() {
-        match job {
-            JobInfo {
-                jid,
-                status: Status::Running { machine },
-                ..
-            } => {
-                let old = running_jobs.insert(machine, jid);
-                assert!(old.is_none());
-            }
-
-            _ => {}
-        }
-    }
-
-    if let Mresp(protocol::MachinesResp { machines }) = avail {
-        let mut avail: Vec<_> = machines
+    if let Mresp(protocol::MachinesResp { machine_status }) = avail {
+        let mut avail: Vec<_> = machine_status
             .into_iter()
-            .map(|(machine, class)| {
-                let running = running_jobs.remove(&machine);
-
-                MachineInfo {
-                    addr: machine,
-                    class,
-                    running: running.map(Jid::jid),
-                }
-            })
+            .map(
+                |(
+                    machine,
+                    protocol::MachineStatus {
+                        class,
+                        is_free,
+                        running_job,
+                    },
+                )| {
+                    MachineInfo {
+                        addr: machine,
+                        class,
+                        running: if is_free {
+                            None
+                        } else {
+                            Some(Jid::new(running_job))
+                        },
+                    }
+                },
+            )
             .collect();
 
         avail.sort_by_key(|m| m.addr.clone());
@@ -1078,41 +1187,56 @@ fn list_avail(addr: &str, jobs: Vec<JobInfo>) -> Vec<MachineInfo> {
     }
 }
 
-fn print_jobs(jobs: Vec<JobInfo>, show_output: bool) {
+fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices: bool) {
+    // First, define some useful stuff...
+
     // Compute and print some summary stats.
-    let mut total_jobs = 0;
-    let mut running_jobs = 0;
-    let mut failed_jobs = 0;
-    let mut done_jobs = 0;
-    let mut waiting_jobs = 0;
-    let mut canceled_jobs = 0;
-    let mut unknown_jobs = 0;
-    for job in jobs.iter() {
-        total_jobs += 1;
-        match job.status {
-            Status::Running { .. } | Status::CopyResults { .. } => running_jobs += 1,
-            Status::Unknown { .. } => unknown_jobs += 1,
-            Status::Canceled { .. } => canceled_jobs += 1,
-            Status::Waiting | Status::Held => waiting_jobs += 1,
-            Status::Done { .. } => done_jobs += 1,
-            Status::Failed { .. } => failed_jobs += 1,
+    fn print_summary(items: &[JobOrMatrixInfo]) {
+        let mut total_jobs = 0;
+        let mut running_jobs = 0;
+        let mut failed_jobs = 0;
+        let mut done_jobs = 0;
+        let mut waiting_jobs = 0;
+        let mut canceled_jobs = 0;
+        let mut unknown_jobs = 0;
+
+        let mut count_task = |task: &JobInfo| {
+            total_jobs += 1;
+            match task.status {
+                Status::Running { .. } | Status::CopyResults { .. } => running_jobs += 1,
+                Status::Unknown { .. } => unknown_jobs += 1,
+                Status::Canceled { .. } => canceled_jobs += 1,
+                Status::Waiting | Status::Held => waiting_jobs += 1,
+                Status::Done { .. } => done_jobs += 1,
+                Status::Failed { .. } => failed_jobs += 1,
+            }
+        };
+
+        for item in items.iter() {
+            match item {
+                JobOrMatrixInfo::Job(job_info) => count_task(job_info),
+                JobOrMatrixInfo::Matrix(matrix_info) => {
+                    for job in matrix_info.jobs.iter() {
+                        count_task(job);
+                    }
+                }
+            }
         }
+
+        println!(
+            "{} jobs: {} waiting, {} running, {} done, {} failed, {} canceled, {} unknown\n",
+            total_jobs,
+            waiting_jobs,
+            running_jobs,
+            done_jobs,
+            failed_jobs,
+            canceled_jobs,
+            unknown_jobs
+        );
     }
-    println!(
-        "{} jobs: {} waiting, {} running, {} done, {} failed, {} canceled, {} unknown\n",
-        total_jobs, waiting_jobs, running_jobs, done_jobs, failed_jobs, canceled_jobs, unknown_jobs
-    );
 
-    // Print a nice human-readable table
-    let mut table = Table::new();
-
-    table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
-    table.set_titles(row![ Fwbu =>
-        "Job", "Status", "Class", "Command", "Machine", "Output"
-    ]);
-
-    // Query each job's status
-    for job in jobs.into_iter() {
+    // Add a row to the table for a task.
+    fn add_task_row(table: &mut Table, job: JobInfo, show_output: bool) {
         let jid = if let Some(matrix) = job.matrix {
             format!("{}:{}", matrix, job.jid)
         } else {
@@ -1253,6 +1377,64 @@ fn print_jobs(jobs: Vec<JobInfo>, show_output: bool) {
             } => {
                 let status = format!("Copy Results ({})", human_ts(Utc::now() - timestamp));
                 table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
+            }
+        }
+    }
+
+    // Add a row to the table representing a whole matrix.
+    fn add_matrix_row(table: &mut Table, matrix: MatrixInfo) {
+        let (pending, total) = {
+            let mut pending = 0;
+            let mut total = 0;
+            for j in matrix.jobs.iter() {
+                if let Status::CopyResults { .. }
+                | Status::Running { .. }
+                | Status::Waiting
+                | Status::Held = j.status
+                {
+                    pending += 1;
+                }
+                total += 1;
+            }
+
+            (pending, total)
+        };
+
+        let id = format!("{} (matrix)", matrix.id);
+
+        if pending == 0 {
+            let status = format!("Done ({} tasks)", total);
+            table.add_row(row![b->id, Fg->status, matrix.class, matrix.cmd, "", ""]);
+        } else {
+            let status = format!("Running ({}/{})", total - pending, total);
+            table.add_row(row![b->id, Fy->status, matrix.class, matrix.cmd, "", ""]);
+        }
+    }
+
+    // Print the summary.
+    print_summary(&items);
+
+    // Print a nice human-readable table.
+    let mut table = Table::new();
+
+    table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
+    table.set_titles(row![ Fwbu =>
+        "Job", "Status", "Class", "Command", "Machine", "Output"
+    ]);
+
+    for item in items.into_iter() {
+        match item {
+            JobOrMatrixInfo::Job(job_info) => add_task_row(&mut table, job_info, show_output),
+            JobOrMatrixInfo::Matrix(matrix_info) => {
+                if collapse_matrices {
+                    add_matrix_row(&mut table, matrix_info);
+                } else {
+                    {
+                        for job_info in matrix_info.jobs.into_iter() {
+                            add_task_row(&mut table, job_info, show_output);
+                        }
+                    }
+                }
             }
         }
     }

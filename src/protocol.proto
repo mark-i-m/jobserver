@@ -181,12 +181,22 @@ message OkResp { }
 
 // Succeeded. A list of available machines and their classes.
 message MachinesResp {
-    map<string, string> machines = 1;
+    // DEPRECATED map<string, string> machines = 1;
+    map<string, MachineStatus> machine_status = 2;
+}
+
+// The status of a single machine.
+message MachineStatus {
+    string class = 1;
+    bool is_free = 2;
+    // If any... check `is_free` first.
+    uint64 running_job = 3;
 }
 
 // A list of job IDs.
 message JobsResp {
     repeated uint64 jobs = 1;
+    repeated MatrixStatusResp matrices = 2;
 }
 
 // A list of variables and their values.
