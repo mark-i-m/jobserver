@@ -598,7 +598,19 @@ impl Server {
                 }
 
                 Ljreq(protocol::ListJobsRequest {}) => {
-                    let tasks: Vec<_> = self.tasks.lock().unwrap().keys().map(|&k| k).collect();
+                    let tasks: Vec<_> = self
+                        .tasks
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .filter_map(|task| {
+                            if task.matrix.is_none() {
+                                Some(task.jid)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
                     let matrices: Vec<_> = self
                         .matrices
                         .lock()

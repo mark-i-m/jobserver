@@ -1429,10 +1429,8 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 if collapse_matrices {
                     add_matrix_row(&mut table, matrix_info);
                 } else {
-                    {
-                        for job_info in matrix_info.jobs.into_iter() {
-                            add_task_row(&mut table, job_info, show_output);
-                        }
+                    for job_info in matrix_info.jobs.into_iter() {
+                        add_task_row(&mut table, job_info, show_output);
                     }
                 }
             }
