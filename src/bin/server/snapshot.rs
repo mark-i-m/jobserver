@@ -176,7 +176,7 @@ mod serialize {
                 class: matrix.class.clone(),
                 cp_results: matrix.cp_results.clone(),
                 variables,
-                jids: matrix.jids.clone(),
+                jids: matrix.jids.iter().map(|j| *j).collect(),
             }
         }
     }
@@ -195,7 +195,7 @@ mod serialize {
                 class: matrix.class.clone(),
                 cp_results: matrix.cp_results.clone(),
                 variables,
-                jids: matrix.jids.clone(),
+                jids: matrix.jids.iter().map(|j| *j).collect(),
             }
         }
     }

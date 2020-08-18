@@ -42,6 +42,7 @@ struct Server {
     // Lock ordering:
     // - machines
     // - tasks
+    // - matrices
     /// Maps available machines to their classes.
     machines: Arc<Mutex<HashMap<String, MachineStatus>>>,
 
@@ -187,7 +188,7 @@ struct Matrix {
     variables: HashMap<String, Vec<String>>,
 
     /// A list of jobs in this matrix.
-    jids: Vec<u64>,
+    jids: HashSet<u64>,
 }
 
 /// Information about a single machine.
@@ -803,7 +804,7 @@ impl Server {
                                     .get_mut(&matrix)
                                     .unwrap()
                                     .jids
-                                    .push(new_jid);
+                                    .insert(new_jid);
                             }
 
                             Jiresp(protocol::JobIdResp { jid: new_jid })
@@ -852,7 +853,7 @@ impl Server {
                         id, cmd, vars
                     );
 
-                    let mut jids = vec![];
+                    let mut jids = HashSet::new();
 
                     // Create a new job for every element in the cartesian product of the variables.
                     for config in cartesian_product(&vars) {
@@ -860,7 +861,7 @@ impl Server {
 
                         for _ in 0..repeat {
                             let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
-                            jids.push(jid);
+                            jids.insert(jid);
 
                             info!(
                                 "[Matrix {}] Added job {} with class {}: {}",
@@ -916,7 +917,7 @@ impl Server {
                             class: matrix.class.clone(),
                             cp_resultsopt,
                             cmd: matrix.cmd.clone(),
-                            jobs: matrix.jids.clone(),
+                            jobs: matrix.jids.iter().map(|j| *j).collect(),
                             variables: protocol::convert_map(&matrix.variables),
                         })
                     } else {
@@ -987,6 +988,7 @@ impl Server {
             {
                 let mut locked_machines = self.machines.lock().unwrap();
                 let mut locked_tasks = self.tasks.lock().unwrap();
+                let mut locked_matrices = self.matrices.lock().unwrap();
 
                 debug!("Machine stata: {:?}", *locked_machines);
 
@@ -1013,7 +1015,15 @@ impl Server {
 
                 // Remove any canceled processes from the task list.
                 for jid in to_remove.drain() {
-                    let _ = locked_tasks.remove(&jid);
+                    let old_task = locked_tasks.remove(&jid);
+                    if let Some(Task {
+                        jid,
+                        matrix: Some(m),
+                        ..
+                    }) = old_task
+                    {
+                        let _ = locked_matrices.get_mut(&m).unwrap().jids.remove(&jid);
+                    }
                 }
 
                 // Clone any failed jobs that need to be cloned.
@@ -1027,13 +1037,11 @@ impl Server {
                     locked_tasks.insert(new_jid, task);
 
                     if let Some(matrix) = maybe_matrix {
-                        self.matrices
-                            .lock()
-                            .unwrap()
+                        locked_matrices
                             .get_mut(&matrix)
                             .unwrap()
                             .jids
-                            .push(new_jid);
+                            .insert(new_jid);
                     }
                 }
 
