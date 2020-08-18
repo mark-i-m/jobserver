@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- Minor backwards-compatible changes to client-server protocol and vast
+  refactoring of client-side printing for `job ls`. These produce a major
+  improvement in the format of job listings for matrices.
+
 ## 0.6
 
 - Changes to client-side `j machine rm` arguments to allow removing classes of
