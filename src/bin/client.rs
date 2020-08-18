@@ -194,13 +194,29 @@ fn build_cli() -> clap::App<'static, 'static> {
         .subcommand(SubCommand::with_name("ls").about("List available machines."))
         .subcommand(
             SubCommand::with_name("rm")
-                .about("Remove the given machine from the available pool.")
+                .about("Remove the given machine or class of machines from the available pool.")
                 .setting(AppSettings::ArgRequiredElseHelp)
                 .arg(
                     Arg::with_name("ADDR")
+                        .short("m")
+                        .long("machine")
+                        .takes_value(true)
+                        .multiple(true)
+                        .number_of_values(1)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .short("c")
+                        .long("class")
+                        .takes_value(true)
+                        .help("The class of machines to remove"),
+                )
+                .group(
+                    ArgGroup::with_name("MACHINES")
                         .required(true)
                         .multiple(true)
-                        .help("The IP:PORT of the machine"),
+                        .args(&["ADDR", "CLASS"]),
                 ),
         )
         .subcommand(
@@ -507,10 +523,24 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("rm", Some(sub_m)) => {
-            for m in sub_m.values_of("ADDR").unwrap() {
-                let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
-                let response = make_request(addr, req);
-                println!("Server response: {:#?}", response);
+            if let Some(addrs) = sub_m.values_of("ADDR") {
+                for m in addrs {
+                    let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
+                    let response = make_request(addr, req);
+                    println!("Server response: {:#?}", response);
+                }
+            }
+
+            if let Some(class) = sub_m.value_of("CLASS") {
+                let addrs: Vec<String> = list_avail(addr, vec![])
+                    .into_iter()
+                    .filter_map(|m| if m.class == class { Some(m.addr) } else { None })
+                    .collect();
+                for m in addrs {
+                    let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
+                    let response = make_request(addr, req);
+                    println!("Server response: {:#?}", response);
+                }
             }
         }
 
