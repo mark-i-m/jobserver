@@ -330,6 +330,22 @@ impl Server {
         *self.matrices.lock().unwrap() = matrices.iter().map(|(m, s)| (*m, s.into())).collect();
         self.next_jid.store(next_jid, Ordering::Relaxed);
 
+        // Older versions of the server would leave forgotten jids in matrices. If there are any,
+        // clean them up now...
+        {
+            let locked_tasks = self.tasks.lock().unwrap();
+            let mut locked_matrices = self.matrices.lock().unwrap();
+
+            for matrix in locked_matrices.values_mut() {
+                matrix.jids = matrix
+                    .jids
+                    .iter()
+                    .filter(|j| locked_tasks.contains_key(j))
+                    .map(|j| *j)
+                    .collect();
+            }
+        }
+
         info!("Succeeded in loading snapshot.");
 
         true
