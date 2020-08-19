@@ -974,6 +974,7 @@ struct MatrixInfo {
     variables: HashMap<String, Vec<String>>,
 }
 
+#[derive(Debug)]
 enum JobListMode {
     /// List all jobs
     All,
@@ -1064,18 +1065,24 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
     };
 
     let len = sorted_ids.len();
-    let selected_ids = sorted_ids
+    let mut selected_ids: Vec<_> = sorted_ids
         .into_iter()
         .enumerate()
         .filter(|(i, j)| match mode {
             JobListMode::All | JobListMode::Flat => true,
             JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
             JobListMode::After(jid) => *j >= jid,
-            JobListMode::Jids(ref jids) => jids.contains(j),
-        });
+            JobListMode::Jids(_) => false,
+        })
+        .map(|(_, j)| j)
+        .collect();
+
+    if let JobListMode::Jids(ref jids) = mode {
+        selected_ids.extend(jids.iter());
+    }
 
     let mut info = vec![];
-    for (_, id) in selected_ids {
+    for id in selected_ids {
         if let Some(MatrixInfoShallow {
             cmd,
             class,
