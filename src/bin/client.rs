@@ -681,6 +681,12 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     })
                     .collect()
             };
+
+            if jids.is_empty() {
+                println!("No jobs selected.");
+                return;
+            }
+
             let paths: Vec<_> = jids
                 .into_iter()
                 .map(|jid| get_job_log_path(addr, jid))
