@@ -666,7 +666,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             let jids: Vec<_> = if sub_m.is_present("JID") {
                 sub_m.values_of("JID").unwrap().map(Jid::from).collect()
             } else {
-                list_jobs(addr, JobListMode::All)
+                list_jobs(addr, JobListMode::Flat)
                     .into_iter()
                     .map(|item| match item {
                         JobOrMatrixInfo::Job(job) => job,
@@ -976,9 +976,6 @@ struct MatrixInfo {
 
 #[derive(Debug)]
 enum JobListMode {
-    /// List all jobs
-    All,
-
     /// List all jobs in a flat way -- as `JobOrMatrixInfo::Job`. This useful when you just want to
     /// iterate over all tasks.
     Flat,
@@ -1069,7 +1066,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
         .into_iter()
         .enumerate()
         .filter(|(i, j)| match mode {
-            JobListMode::All | JobListMode::Flat => true,
+            JobListMode::Flat => true,
             JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
             JobListMode::After(jid) => *j >= jid,
             JobListMode::Jids(_) => false,
