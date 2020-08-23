@@ -1069,6 +1069,9 @@ impl Server {
                     }
                 }
 
+                // Remove any empty matrices.
+                locked_matrices.retain(|_, matrix| !matrix.jids.is_empty());
+
                 // Clone any failed jobs that need to be cloned.
                 for jid in to_clone.drain() {
                     let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
