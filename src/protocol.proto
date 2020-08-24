@@ -77,6 +77,11 @@ message SetUpMachineRequest {
     //
     // The commands may use any existing variables known to the server.
     repeated string cmds = 3;
+
+    // The number of minutes of the timeout, or 0 if no timeout (let the job
+    // run however long it does). The timeout is taken as the total duration of
+    // all commands in the task, not each individual command.
+    uint64 timeout = 5;
 }
 
 // Set the value of a variable.
@@ -105,6 +110,10 @@ message AddJobRequest {
 
     // Whether to repeat the task on failure.
     bool repeat_on_fail = 4;
+
+    // The number of minutes of the timeout, or 0 if no timeout (let the job
+    // run however long it does).
+    uint64 timeout = 5;
 }
 
 // Get a list of job IDs.

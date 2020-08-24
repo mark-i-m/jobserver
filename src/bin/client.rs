@@ -267,6 +267,15 @@ fn build_cli() -> clap::App<'static, 'static> {
                         .long("class")
                         .takes_value(true)
                         .help("If passed, the machine is added to the class after setup."),
+                )
+                .arg(
+                    Arg::with_name("TIMEOUT")
+                        .long("timeout")
+                        .takes_value(true)
+                        .help(
+                            "If passed, time out the setup task after TIMEOUT minutes \
+                             total for all commands.",
+                        ),
                 ),
         );
 
@@ -336,6 +345,10 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "(optional) the number of copies of this job to submit (default: 1)")
                 (@arg RETRY: --retry
                  "(optional) if the job fails, retry until success or cancellation.")
+                (@arg TIMEOUT: --timeout +takes_value {is_usize}
+                 "(optional) the timeout for this job in minutes. If the job doesn't \
+                  complete within TIMEOUT minutes of entering the \"running\" state, \
+                  the job killed.")
             )
 
             (@subcommand ls =>
@@ -567,12 +580,17 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             let class = sub_m
                 .value_of("CLASS")
                 .map(|s| protocol::set_up_machine_request::Classopt::Class(s.into()));
+            let timeout = sub_m
+                .value_of("TIMEOUT")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(0);
 
             for machine in machines.into_iter() {
                 let req = Sumreq(protocol::SetUpMachineRequest {
                     addr: machine,
                     cmds: cmds.clone(),
                     classopt: class.clone(),
+                    timeout,
                 });
 
                 let response = make_request(addr, req);
@@ -730,6 +748,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(1);
             let retry = sub_m.is_present("RETRY");
+            let timeout = sub_m
+                .value_of("TIMEOUT")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(0);
 
             for _ in 0..nclones {
                 let req = Ajreq(protocol::AddJobRequest {
@@ -739,6 +761,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         .value_of("CP_PATH")
                         .map(|s| protocol::add_job_request::CpResultsopt::CpResults(s.into())),
                     repeat_on_fail: retry,
+                    timeout,
                 });
 
                 let response = make_request(addr, req);

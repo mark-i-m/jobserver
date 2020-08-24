@@ -28,6 +28,8 @@ message SnapshotTask {
     required bool repeat_on_fail = 10;
     required string timestamp = 11;
     optional string done_timestamp = 12;
+    optional uint64 timeout = 14;
+    optional uint64 timedout = 15;
 }
 
 enum SnapshotTaskType {

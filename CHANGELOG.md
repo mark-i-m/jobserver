@@ -2,10 +2,11 @@
 
 ## 0.7.0
 
-- Fix some bugs
 - Matrices that have become empty because all of their jobs were forgotten will
   also be forgotten. This is different from prior behavior, so I'm bumping the
   major version.
+- Added support for timing out jobs.
+- Fix some bugs
 
 ## 0.6.1
 

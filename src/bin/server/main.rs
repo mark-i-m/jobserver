@@ -10,9 +10,8 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
 
-use chrono::{offset::Utc, DateTime};
+use chrono::{offset::Utc, DateTime, Duration};
 
 use clap::clap_app;
 
@@ -167,6 +166,14 @@ struct Task {
 
     /// The time when this job entered a Done or Error state (if it has).
     done_timestamp: Option<DateTime<Utc>>,
+
+    /// The length of the timeout if any. The timeout will cause the job to move into the failed
+    /// state with a timeout error if it is in the `Running` state for too long.
+    timeout: Option<Duration>,
+
+    /// Indicates that a timeout occurred; the usize indicates the index of the cmd that timed
+    /// out.
+    timedout: Option<usize>,
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
@@ -506,6 +513,7 @@ impl Server {
                     addr,
                     classopt,
                     cmds,
+                    timeout,
                 }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -534,6 +542,12 @@ impl Server {
                             repeat_on_fail: false,
                             timestamp: Utc::now(),
                             done_timestamp: None,
+                            timeout: if timeout > 0 {
+                                Some(Duration::minutes(timeout as i64))
+                            } else {
+                                None
+                            },
+                            timedout: None,
                         },
                     );
 
@@ -566,6 +580,7 @@ impl Server {
                     cp_resultsopt,
                     // prost uses a default of `false`.
                     repeat_on_fail,
+                    timeout,
                 }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -591,6 +606,12 @@ impl Server {
                             repeat_on_fail,
                             timestamp: Utc::now(),
                             done_timestamp: None,
+                            timeout: if timeout > 0 {
+                                Some(Duration::minutes(timeout as i64))
+                            } else {
+                                None
+                            },
+                            timedout: None,
                         },
                     );
 
@@ -927,6 +948,8 @@ impl Server {
                                     repeat_on_fail: true,
                                     timestamp: Utc::now(),
                                     done_timestamp: None,
+                                    timeout: None,
+                                    timedout: None,
                                 },
                             );
                         }
@@ -1017,7 +1040,7 @@ impl Server {
             // Sleep 30s, but keep waking up to check if there is likely more work. If there is an
             // indication of potential work, do a full iteration.
             for _ in 0..30000 / 100 {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(std::time::Duration::from_millis(100));
 
                 if updated || self.client_ping.fetch_and(false, Ordering::Relaxed) {
                     break;
@@ -1113,12 +1136,14 @@ impl Server {
                 class,
                 variables,
                 cp_results,
+                timeout,
                 state: _,
                 machine: _,
                 canceled: _,
                 repeat_on_fail,
                 timestamp: _,
                 done_timestamp: _,
+                timedout: _,
             } => {
                 info!("Cloning job {} to job {}, {:?}", jid, new_jid, task);
 
@@ -1141,6 +1166,8 @@ impl Server {
                     repeat_on_fail: *repeat_on_fail,
                     timestamp: Utc::now(),
                     done_timestamp: None,
+                    timeout: *timeout,
+                    timedout: None,
                 }
             }
 
@@ -1152,12 +1179,14 @@ impl Server {
                 class,
                 machine,
                 variables,
+                timeout,
                 canceled: _,
                 state: _,
                 cp_results: None,
                 repeat_on_fail: false,
                 timestamp: _,
                 done_timestamp: _,
+                timedout: _,
             } => {
                 info!(
                     "Cloning setup task {} to setup task {}, {:?}",
@@ -1183,6 +1212,8 @@ impl Server {
                     repeat_on_fail: false,
                     timestamp: Utc::now(),
                     done_timestamp: None,
+                    timeout: *timeout,
+                    timedout: None,
                 }
             }
 
@@ -1464,7 +1495,19 @@ impl Server {
             // Not ready yet... do nothing.
             Ok(None) => {
                 debug!("Task {} is still running", jid);
-                false
+
+                if task
+                    .timeout
+                    .map_or(false, |timeout| Utc::now() - task.timestamp >= timeout)
+                {
+                    info!("Task {} timedout. Cancelling.", jid);
+                    task.timedout = Some(idx);
+                    task.canceled = Some(false); // don't forget, just cancel.
+
+                    true
+                } else {
+                    false
+                }
             }
 
             // There was an error waiting for the child... not clear what to do here... for
@@ -1647,7 +1690,15 @@ impl Server {
         if remove {
             to_remove.insert(jid);
         } else {
-            task.update_state(TaskState::Killed);
+            // If timed out, then Fail rather than Kill.
+            if let Some(n) = task.timedout {
+                task.update_state(TaskState::Error {
+                    error: format!("Timed out after {}", task.timeout.unwrap()),
+                    n,
+                });
+            } else {
+                task.update_state(TaskState::Killed);
+            }
             task.canceled = None; // No need to cancel it again!
             task.done_timestamp = Some(Utc::now());
         }
