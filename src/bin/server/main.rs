@@ -16,7 +16,7 @@ use chrono::{offset::Utc, DateTime, Duration};
 use clap::clap_app;
 
 use expjobserver::{
-    cartesian_product, cmd_replace_machine, cmd_replace_vars, cmd_to_path,
+    cartesian_product, cmd_replace_machine, cmd_replace_vars, cmd_to_path, human_ts,
     protocol::{
         self,
         request::RequestType::{self, *},
@@ -1693,7 +1693,7 @@ impl Server {
             // If timed out, then Fail rather than Kill.
             if let Some(n) = task.timedout {
                 task.update_state(TaskState::Error {
-                    error: format!("Timed out after {}", task.timeout.unwrap()),
+                    error: format!("Timed out after {}", human_ts(task.timeout.unwrap())),
                     n,
                 });
             } else {

@@ -12,7 +12,7 @@ use chrono::{offset::Utc, DateTime};
 use clap::clap_app;
 
 use expjobserver::{
-    deserialize_ts,
+    deserialize_ts, human_ts,
     protocol::{self, request::RequestType::*, response::ResponseType::*},
     SERVER_ADDR,
 };
@@ -1590,46 +1590,4 @@ fn is_usize(s: String) -> Result<(), String> {
         .parse::<usize>()
         .map(|_| ())
         .map_err(|e| format!("{:?}", e))
-}
-
-fn human_ts(d: chrono::Duration) -> String {
-    let total_seconds = d.num_seconds();
-
-    const SECONDS_PER_MINUTE: i64 = 60;
-    const SECONDS_PER_HOUR: i64 = 60 * SECONDS_PER_MINUTE;
-    const SECONDS_PER_DAY: i64 = 24 * SECONDS_PER_HOUR;
-
-    let display_days = d.num_days();
-    let display_hours = (total_seconds - display_days * SECONDS_PER_DAY) / SECONDS_PER_HOUR;
-    let display_minutes =
-        (total_seconds - display_days * SECONDS_PER_DAY - display_hours * SECONDS_PER_HOUR)
-            / SECONDS_PER_MINUTE;
-    let display_seconds = total_seconds
-        - display_days * SECONDS_PER_DAY
-        - display_hours * SECONDS_PER_HOUR
-        - display_minutes * SECONDS_PER_MINUTE;
-
-    let mut display_ts = String::new();
-
-    if display_days > 0 {
-        display_ts.push_str(&format!("{}d", display_days));
-    }
-
-    if display_hours > 0 {
-        display_ts.push_str(&format!("{}h", display_hours));
-    }
-
-    if display_minutes > 0 && display_days == 0 {
-        display_ts.push_str(&format!("{}m", display_minutes));
-    }
-
-    if display_seconds > 0 && display_days == 0 && display_hours == 0 {
-        display_ts.push_str(&format!("{}s", display_seconds));
-    }
-
-    if total_seconds == 0 {
-        display_ts.push_str("0s");
-    }
-
-    display_ts
 }
