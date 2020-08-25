@@ -6,6 +6,7 @@
   also be forgotten. This is different from prior behavior, so I'm bumping the
   major version.
 - Added support for timing out jobs.
+- Added a shortcut for restarting a job.
 - Fix some bugs
 
 ## 0.6.1
