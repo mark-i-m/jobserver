@@ -655,6 +655,7 @@ impl Server {
                     class,
                     cp_resultsopt,
                     repeat,
+                    timeout,
                 }) => {
                     let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -671,6 +672,12 @@ impl Server {
                             .iter()
                             .map(|(k, v)| (k.to_owned(), vec![v.to_owned()])),
                     );
+
+                    let timeout = if timeout == 0 {
+                        None
+                    } else {
+                        Some(Duration::minutes(timeout as i64))
+                    };
 
                     info!(
                         "Create matrix with ID {}. Cmd: {:?}, Vars: {:?}",
@@ -703,12 +710,12 @@ impl Server {
                                     cp_results: cp_results.clone(),
                                     state: TaskState::Waiting,
                                     variables: config.clone(),
+                                    timeout,
                                     machine: None,
                                     canceled: None,
                                     repeat_on_fail: true,
                                     timestamp: Utc::now(),
                                     done_timestamp: None,
-                                    timeout: None,
                                     timedout: None,
                                 },
                             );

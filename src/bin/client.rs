@@ -452,6 +452,10 @@ fn build_cli() -> clap::App<'static, 'static> {
                      "A space-separated list of KEY=VALUE1,VALUE2,... pairs for replacing variables.")
                     (@arg TIMES: -x --times +takes_value {is_usize}
                      "(optional) the number of copies of each job to submit (default: 1)")
+                    (@arg TIMEOUT: --timeout +takes_value {is_usize}
+                     "(optional) the timeout for this job in minutes. If the job doesn't \
+                      complete within TIMEOUT minutes of entering the \"running\" state, \
+                      the job killed.")
                 )
 
                 (@subcommand stat =>
@@ -898,6 +902,10 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     .value_of("TIMES")
                     .map(|s| s.parse().unwrap())
                     .unwrap_or(1),
+                timeout: sub_m
+                    .value_of("TIMEOUT")
+                    .map(|s| s.parse().unwrap())
+                    .unwrap_or(0),
             });
 
             let response = make_request(addr, req);
