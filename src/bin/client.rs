@@ -403,6 +403,13 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "(optional) the number of clones to make (default: 1)")
             )
 
+            (@subcommand restart =>
+                (about: "Cancel then clone a job.")
+                (@setting ArgRequiredElseHelp)
+                (@arg JID: +required {is_usize} ...
+                 "The job ID(s) of the job to clone.")
+            )
+
             (@subcommand log =>
                 (about: "Print the path to the job log.")
                 (@setting ArgRequiredElseHelp)
@@ -798,6 +805,27 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     );
                     println!("Server response: {:#?}", response);
                 }
+            }
+        }
+
+        ("restart", Some(sub_m)) => {
+            for jid in sub_m.values_of("JID").unwrap() {
+                let response = make_request(
+                    addr,
+                    Cjreq(protocol::CancelJobRequest {
+                        jid: Jid::from(jid).into(),
+                        remove: false,
+                    }),
+                );
+                println!("Server response: {:#?}", response);
+
+                let response = make_request(
+                    addr,
+                    Cljreq(protocol::CloneJobRequest {
+                        jid: Jid::from(jid).into(),
+                    }),
+                );
+                println!("Server response: {:#?}", response);
             }
         }
 
