@@ -842,7 +842,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .collect();
 
             let job_info = list_jobs(addr, JobListMode::Jids(jids));
-            let job_info = job_info.into_iter().map(|job| job.expect_job());
+            let job_info = job_info.into_iter().flat_map(|job| match job {
+                JobOrMatrixInfo::Job(ji) => vec![ji],
+                JobOrMatrixInfo::Matrix(mi) => mi.jobs,
+            });
 
             for job in job_info {
                 use std::path::PathBuf;
