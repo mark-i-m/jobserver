@@ -1307,8 +1307,40 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
         );
     }
 
+    // Compute the width with which to truncate the cmd in a row, if needed.
+    const fn row_cmd_width(term_width: u16) -> usize {
+        const JID_WIDTH: usize = 15;
+        const STATUS_WIDTH: usize = 20;
+        const CLASS_WIDTH: usize = 10;
+        const MACHINE_WIDTH: usize = 35;
+        const OUTPUT_WIDTH: usize = 5;
+        const ELLIPSIS_WIDTH: usize = 3;
+        const PADDING_WIDTH: usize = 2 * 6;
+
+        term_width as usize
+            - JID_WIDTH
+            - STATUS_WIDTH
+            - CLASS_WIDTH
+            - MACHINE_WIDTH
+            - OUTPUT_WIDTH
+            - ELLIPSIS_WIDTH
+            - PADDING_WIDTH
+    }
+
+    fn truncate_cmd(cmd: &str, term_width: u16) -> String {
+        let cmd_width = row_cmd_width(term_width);
+
+        let mut cmd_trunc = cmd.to_owned();
+        cmd_trunc.truncate(cmd_width);
+        if cmd_trunc.len() < cmd.len() {
+            cmd_trunc.push_str("...");
+        }
+
+        cmd_trunc
+    }
+
     // Add a row to the table for a task.
-    fn add_task_row(table: &mut Table, job: JobInfo, show_output: bool) {
+    fn add_task_row(table: &mut Table, job: JobInfo, show_output: bool, term_width: u16) {
         let jid = if let Some(matrix) = job.matrix {
             format!("{}:{}", matrix, job.jid)
         } else {
@@ -1327,6 +1359,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 } else {
                     "".into()
                 };
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, FDi->"Unknown", class, cmd, machine, ""]);
             }
 
@@ -1342,6 +1375,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 } else {
                     "".into()
                 };
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Fri->"Canceled", class, cmd, machine, ""]);
             }
 
@@ -1354,6 +1388,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 ..
             } => {
                 let status = format!("Waiting ({})", human_ts(Utc::now() - timestamp));
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
@@ -1366,6 +1401,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 ..
             } => {
                 let status = format!("Held ({})", human_ts(Utc::now() - timestamp));
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
             }
 
@@ -1386,6 +1422,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                     "Done ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
                 );
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Fm->status, class, cmd, machine, ""]);
             }
 
@@ -1407,6 +1444,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                     "Done ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
                 );
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Fg->status, class, cmd, machine, Fg->path]);
             }
 
@@ -1423,6 +1461,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                     "Failed ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
                 );
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Frbu->status, class, cmd,
                               if let Some(machine) = machine { machine } else {"".into()}, error]);
             }
@@ -1436,6 +1475,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 ..
             } => {
                 let status = format!("Running ({})", human_ts(Utc::now() - timestamp));
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
 
@@ -1448,13 +1488,14 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 ..
             } => {
                 let status = format!("Copy Results ({})", human_ts(Utc::now() - timestamp));
+                let cmd = truncate_cmd(&cmd, term_width);
                 table.add_row(row![b->jid, Fy->status, class, cmd, machine, ""]);
             }
         }
     }
 
     // Add a row to the table representing a whole matrix.
-    fn add_matrix_row(table: &mut Table, matrix: MatrixInfo) {
+    fn add_matrix_row(table: &mut Table, matrix: MatrixInfo, term_width: u16) {
         let (pending, total) = {
             let mut pending = 0;
             let mut total = 0;
@@ -1476,10 +1517,12 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
 
         if pending == 0 {
             let status = format!("Done ({} tasks)", total);
-            table.add_row(row![b->id, Fg->status, matrix.class, matrix.cmd, "", ""]);
+            let cmd = truncate_cmd(&matrix.cmd, term_width);
+            table.add_row(row![b->id, Fg->status, matrix.class, cmd, "", ""]);
         } else {
             let status = format!("Running ({}/{})", total - pending, total);
-            table.add_row(row![b->id, Fy->status, matrix.class, matrix.cmd, "", ""]);
+            let cmd = truncate_cmd(&matrix.cmd, term_width);
+            table.add_row(row![b->id, Fy->status, matrix.class, cmd, "", ""]);
         }
     }
 
@@ -1487,6 +1530,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
     print_summary(&items);
 
     // Print a nice human-readable table.
+    let term_width = console::Term::stdout().size().1;
     let mut table = Table::new();
 
     table.set_format(*prettytable::format::consts::FORMAT_CLEAN);
@@ -1496,13 +1540,15 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
 
     for item in items.into_iter() {
         match item {
-            JobOrMatrixInfo::Job(job_info) => add_task_row(&mut table, job_info, show_output),
+            JobOrMatrixInfo::Job(job_info) => {
+                add_task_row(&mut table, job_info, show_output, term_width)
+            }
             JobOrMatrixInfo::Matrix(matrix_info) => {
                 if collapse_matrices {
-                    add_matrix_row(&mut table, matrix_info);
+                    add_matrix_row(&mut table, matrix_info, term_width);
                 } else {
                     for job_info in matrix_info.jobs.into_iter() {
-                        add_task_row(&mut table, job_info, show_output);
+                        add_task_row(&mut table, job_info, show_output, term_width);
                     }
                 }
             }
