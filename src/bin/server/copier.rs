@@ -188,7 +188,7 @@ fn copier_thread(mut state: CopierThreadState) {
 
                     // If timed out maybe retry
                     if timed_out {
-                        warn!("Copying results for job {} timed out.", jid,);
+                        warn!("Copying results for job {} timed out.", jid);
                         if results_info.attempt < RETRIES {
                             state.incoming.lock().unwrap().push_back(CopyJobInfo {
                                 jid: results_info.jid,
@@ -205,6 +205,8 @@ fn copier_thread(mut state: CopierThreadState) {
                             state.copying_flags.lock().unwrap().insert(*jid);
                             to_remove.push(*jid);
                         }
+                    } else {
+                        info!("Still copying results for job {}.", jid);
                     }
                 }
             }
