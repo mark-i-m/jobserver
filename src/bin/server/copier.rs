@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 /// Timeout on the copy task in minutes.
 const RSYNC_TIMEOUT: u64 = 2 * 60;
+/// Passed to rsync's --timeout option.
+const RSYNC_IO_TIMEOUT: u64 = 120; // seconds
 /// The number of times to retry before giving up.
 const RETRIES: usize = 3;
 /// A little log directory for rsync... not ideal, but better than nothing.
@@ -240,6 +242,7 @@ fn start_copy(
     let cmd = cmd
         .arg("-vzP")
         .arg("--rsh=ssh")
+        .arg(&format!("--timeout={}", RSYNC_IO_TIMEOUT))
         .arg(&format!("{}:{}", machine_ip, from))
         .arg(&to)
         .stdout(std::process::Stdio::from(log))
