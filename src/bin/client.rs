@@ -1269,6 +1269,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
         let mut failed_jobs = 0;
         let mut done_jobs = 0;
         let mut waiting_jobs = 0;
+        let mut held_jobs = 0;
         let mut canceled_jobs = 0;
         let mut unknown_jobs = 0;
 
@@ -1278,7 +1279,8 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 Status::Running { .. } | Status::CopyResults { .. } => running_jobs += 1,
                 Status::Unknown { .. } => unknown_jobs += 1,
                 Status::Canceled { .. } => canceled_jobs += 1,
-                Status::Waiting | Status::Held => waiting_jobs += 1,
+                Status::Waiting => waiting_jobs += 1,
+                Status::Held => held_jobs += 1,
                 Status::Done { .. } => done_jobs += 1,
                 Status::Failed { .. } => failed_jobs += 1,
             }
@@ -1296,9 +1298,10 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
         }
 
         println!(
-            "{} jobs: {} waiting, {} running, {} done, {} failed, {} canceled, {} unknown\n",
+            "{} jobs: {} waiting, {} held, {} running, {} done, {} failed, {} canceled, {} unknown\n",
             total_jobs,
             waiting_jobs,
+            held_jobs,
             running_jobs,
             done_jobs,
             failed_jobs,
