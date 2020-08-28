@@ -14,6 +14,8 @@ const RSYNC_IO_TIMEOUT: u64 = 120; // seconds
 const RETRIES: usize = 3;
 /// A little log directory for rsync... not ideal, but better than nothing.
 const RSYNC_LOG_PATH: &str = "/tmp/jobserver-rsync.log";
+/// The max number of concurrent copy jobs.
+const MAX_CONCURRENCY: usize = 2;
 
 /// (jid, machine, from_path, to_path, attempt)
 pub type CopierThreadQueue = LinkedList<CopyJobInfo>;
@@ -97,28 +99,30 @@ fn copier_thread(mut state: CopierThreadState) {
         // Sleep a bit. This prevents wasted CPU and hogging locks.
         std::thread::sleep(Duration::from_secs(1));
 
-        // Check for new tasks to start.
-        while let Some(new) = state.incoming.lock().unwrap().pop_front() {
-            let jid = new.jid;
+        // Check for new tasks to start if we have capacity.
+        if state.ongoing.len() < MAX_CONCURRENCY {
+            while let Some(new) = state.incoming.lock().unwrap().pop_front() {
+                let jid = new.jid;
 
-            // If there is an existing task, kill it.
-            if let Some(mut old) = state.ongoing.remove(&jid) {
-                let _ = old.process.kill();
-            }
-
-            match start_copy(new.clone()) {
-                // If success, good.
-                Ok(results_info) => {
-                    state.ongoing.insert(jid, results_info);
+                // If there is an existing task, kill it.
+                if let Some(mut old) = state.ongoing.remove(&jid) {
+                    let _ = old.process.kill();
                 }
 
-                // Otherwise, re-enqueue and try again later.
-                Err(err) => {
-                    error!(
-                        "Unable to start copying process for job {}. Re-enqueuing. {}",
-                        jid, err,
-                    );
-                    state.incoming.lock().unwrap().push_back(new);
+                match start_copy(new.clone()) {
+                    // If success, good.
+                    Ok(results_info) => {
+                        state.ongoing.insert(jid, results_info);
+                    }
+
+                    // Otherwise, re-enqueue and try again later.
+                    Err(err) => {
+                        error!(
+                            "Unable to start copying process for job {}. Re-enqueuing. {}",
+                            jid, err,
+                        );
+                        state.incoming.lock().unwrap().push_back(new);
+                    }
                 }
             }
         }
