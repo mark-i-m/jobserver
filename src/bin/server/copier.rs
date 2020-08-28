@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 /// Timeout on the copy task in minutes.
 const RSYNC_TIMEOUT: u64 = 60;
 /// Passed to rsync's --timeout option.
-const RSYNC_IO_TIMEOUT: u64 = 120; // seconds
+const RSYNC_IO_TIMEOUT: u64 = 60; // seconds
 /// The number of times to retry before giving up.
 const RETRIES: usize = 3;
 /// A little log directory for rsync... not ideal, but better than nothing.
