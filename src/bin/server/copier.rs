@@ -127,6 +127,10 @@ fn copier_thread(mut state: CopierThreadState) {
             }
         }
 
+        if !state.ongoing.is_empty() {
+            debug!("Ongoing copy jobs: {:?}", state.ongoing);
+        }
+
         // Check on ongoing copies. If they are taking too long, restart them. If they are
         // complete, notify the worker thread.
         let mut to_remove = vec![];
@@ -206,7 +210,10 @@ fn copier_thread(mut state: CopierThreadState) {
                             to_remove.push(*jid);
                         }
                     } else {
-                        info!("Still copying results for job {}.", jid);
+                        info!(
+                            "Still copying results for job {}, attempt {}.",
+                            jid, results_info.attempt
+                        );
                     }
                 }
             }
