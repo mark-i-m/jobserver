@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Timeout on the copy task in minutes.
-const RSYNC_TIMEOUT: u64 = 2 * 60;
+const RSYNC_TIMEOUT: u64 = 60;
 /// Passed to rsync's --timeout option.
 const RSYNC_IO_TIMEOUT: u64 = 120; // seconds
 /// The number of times to retry before giving up.
