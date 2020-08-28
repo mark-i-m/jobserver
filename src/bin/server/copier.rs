@@ -139,8 +139,8 @@ fn copier_thread(mut state: CopierThreadState) {
                 }
                 Ok(Some(exit)) => {
                     warn!(
-                        "Copying results for job {} failed with exit code {}.",
-                        jid, exit
+                        "Copying results for job {} failed with exit code {} (attempt {}).",
+                        jid, exit, results_info.attempt
                     );
 
                     // Maybe retry.
@@ -158,8 +158,8 @@ fn copier_thread(mut state: CopierThreadState) {
                             jid, RETRIES
                         );
                         state.copying_flags.lock().unwrap().insert(*jid);
-                        to_remove.push(*jid);
                     }
+                    to_remove.push(*jid);
                 }
                 Err(err) => {
                     error!("Error copy results for job {}: {}", jid, err);
@@ -179,8 +179,8 @@ fn copier_thread(mut state: CopierThreadState) {
                             jid, RETRIES
                         );
                         state.copying_flags.lock().unwrap().insert(*jid);
-                        to_remove.push(*jid);
                     }
+                    to_remove.push(*jid);
                 }
                 Ok(None) => {
                     let timed_out = (Instant::now() - results_info.start_time)
@@ -229,7 +229,10 @@ fn start_copy(
     }: CopyJobInfo,
 ) -> Result<ResultsInfo, std::io::Error> {
     // Copy via rsync
-    info!("Copying results (job {}) to {}", jid, to);
+    info!(
+        "Copying results (job {}; attempt {}) to {}",
+        jid, attempt, to
+    );
 
     // HACK: assume all machine names are in the form HOSTNAME:PORT.
     let machine_ip = machine.split(":").next().unwrap();
