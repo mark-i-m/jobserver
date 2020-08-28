@@ -258,10 +258,7 @@ impl Server {
                     }
                 } else {
                     task.update_state(TaskState::Error {
-                        error: format!(
-                            "Task (command {}) returned failing exit code: {}",
-                            idx, status
-                        ),
+                        error: format!("Command {} failed: {}", idx, status),
                         n: idx,
                     });
                     task.done_timestamp = Some(Utc::now());
