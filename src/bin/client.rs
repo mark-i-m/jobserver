@@ -11,6 +11,8 @@ use chrono::{offset::Utc, DateTime};
 
 use clap::clap_app;
 
+use console::style;
+
 use expjobserver::{
     deserialize_ts, human_ts,
     protocol::{self, request::RequestType::*, response::ResponseType::*},
@@ -1262,6 +1264,15 @@ fn list_avail(addr: &str) -> Vec<MachineInfo> {
 fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices: bool) {
     // First, define some useful stuff...
 
+    macro_rules! style {
+        ($status:ident, $fmt:literal, $($args:expr),+ $(; $($style:ident),+)?) => {{
+            $status += &format!("{}",
+                style(format!($fmt, $($args),+))
+                    $($(. $style () )+)?
+            );
+        }}
+    }
+
     // Compute and print some summary stats.
     fn print_summary(items: &[JobOrMatrixInfo]) {
         let mut total_jobs = 0;
@@ -1297,17 +1308,22 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
             }
         }
 
-        println!(
-            "{} jobs: {} waiting, {} held, {} running, {} done, {} failed, {} canceled, {} unknown\n",
-            total_jobs,
-            waiting_jobs,
-            held_jobs,
-            running_jobs,
-            done_jobs,
-            failed_jobs,
-            canceled_jobs,
-            unknown_jobs
-        );
+        let mut summary = format!("{} jobs: ", total_jobs);
+        style!(summary, "{} waiting", waiting_jobs; blue, bright);
+        summary += ", ";
+        style!(summary, "{} held", held_jobs; blue, bright);
+        summary += ", ";
+        style!(summary, "{} running", running_jobs; yellow);
+        summary += ", ";
+        style!(summary, "{} done", done_jobs; green);
+        summary += ", ";
+        style!(summary, "{} failed", failed_jobs; red, underlined);
+        summary += ", ";
+        style!(summary, "{} cancelled", canceled_jobs; red);
+        summary += ", ";
+        style!(summary, "{} unknown", unknown_jobs; black, bright);
+
+        println!("{}\n", summary);
     }
 
     // Compute the width with which to truncate the cmd in a row, if needed.
@@ -1392,7 +1408,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
             } => {
                 let status = format!("Waiting ({})", human_ts(Utc::now() - timestamp));
                 let cmd = truncate_cmd(&cmd, term_width);
-                table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
+                table.add_row(row![b->jid, FB->status, class, cmd, "", ""]);
             }
 
             JobInfo {
@@ -1405,7 +1421,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
             } => {
                 let status = format!("Held ({})", human_ts(Utc::now() - timestamp));
                 let cmd = truncate_cmd(&cmd, term_width);
-                table.add_row(row![b->jid, Fb->status, class, cmd, "", ""]);
+                table.add_row(row![b->jid, FB->status, class, cmd, "", ""]);
             }
 
             JobInfo {
@@ -1499,34 +1515,78 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
 
     // Add a row to the table representing a whole matrix.
     fn add_matrix_row(table: &mut Table, matrix: MatrixInfo, term_width: u16) {
-        let (pending, total) = {
-            let mut pending = 0;
-            let mut total = 0;
+        let (running, waiting, held, done, failed, cancelled, unknown) = {
+            let mut running = 0;
+            let mut waiting = 0;
+            let mut held = 0;
+            let mut done = 0;
+            let mut failed = 0;
+            let mut cancelled = 0;
+            let mut unknown = 0;
             for j in matrix.jobs.iter() {
-                if let Status::CopyResults { .. }
-                | Status::Running { .. }
-                | Status::Waiting
-                | Status::Held = j.status
-                {
-                    pending += 1;
+                match j.status {
+                    Status::Running { .. } | Status::CopyResults { .. } => running += 1,
+                    Status::Waiting => waiting += 1,
+                    Status::Held => held += 1,
+                    Status::Done { .. } => done += 1,
+                    Status::Failed { .. } => failed += 1,
+                    Status::Canceled { .. } => cancelled += 1,
+                    Status::Unknown { .. } => unknown += 1,
                 }
-                total += 1;
             }
 
-            (pending, total)
+            (running, waiting, held, done, failed, cancelled, unknown)
         };
 
         let id = format!("{} (matrix)", matrix.id);
 
-        if pending == 0 {
-            let status = format!("Done ({} tasks)", total);
-            let cmd = truncate_cmd(&matrix.cmd, term_width);
-            table.add_row(row![b->id, Fg->status, matrix.class, cmd, "", ""]);
-        } else {
-            let status = format!("Running ({}/{})", total - pending, total);
-            let cmd = truncate_cmd(&matrix.cmd, term_width);
-            table.add_row(row![b->id, Fy->status, matrix.class, cmd, "", ""]);
-        }
+        let status = {
+            let mut status = String::new();
+            if running > 0 {
+                style!(status, "{}R", running; yellow);
+            }
+            if waiting > 0 {
+                if !status.is_empty() {
+                    status.push_str(" ");
+                }
+                style!(status, "{}W", waiting; blue, bright);
+            }
+            if held > 0 {
+                if !status.is_empty() {
+                    status.push_str(" ");
+                }
+                style!(status, "{}H", held; blue, bright);
+            }
+            if done > 0 {
+                if !status.is_empty() {
+                    status.push_str(" ");
+                }
+                style!(status, "{}D", done; green);
+            }
+            if failed > 0 {
+                if !status.is_empty() {
+                    status.push_str(" ");
+                }
+                style!(status, "{}F", failed; red, underlined);
+            }
+            if cancelled > 0 {
+                if !status.is_empty() {
+                    status.push_str(" ");
+                }
+                style!(status, "{}C", cancelled; red);
+            }
+            if unknown > 0 {
+                if !status.is_empty() {
+                    status.push_str(" ");
+                }
+                style!(status, "{}U", unknown; black, bright);
+            }
+
+            status
+        };
+
+        let cmd = truncate_cmd(&matrix.cmd, term_width);
+        table.add_row(row![b->id, status, matrix.class, cmd, "", ""]);
     }
 
     // Print the summary.
