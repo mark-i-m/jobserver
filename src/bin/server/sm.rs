@@ -29,7 +29,7 @@ impl Server {
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         to_remove: &mut HashSet<u64>,
         to_clone: &mut HashSet<u64>,
-        copying_flags: Arc<Mutex<HashSet<u64>>>,
+        copying_flags: Arc<Mutex<HashMap<u64, bool>>>,
         copy_thread_queue: Arc<Mutex<CopierThreadQueue>>,
     ) -> bool {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
@@ -73,16 +73,24 @@ impl Server {
             ),
 
             TaskState::CopyingResults { ref results_path } => {
-                // The copy thread will insert a `()` just before it exits, indicating it's done.
-                if copying_flags.lock().unwrap().remove(&jid) {
-                    debug!("Copy results for task {} completed.", jid);
-                    let results_path = results_path.clone();
-                    task.update_state(TaskState::Finalize {
-                        results_path: Some(results_path),
-                    });
-                    true
-                } else {
-                    false
+                match copying_flags.lock().unwrap().remove(&jid) {
+                    Some(true) => {
+                        debug!("Copy results for task {} completed.", jid);
+                        let results_path = results_path.clone();
+                        task.update_state(TaskState::Finalize {
+                            results_path: Some(results_path),
+                        });
+                        true
+                    }
+                    Some(false) => {
+                        debug!("Copy results for task {} failed.", jid);
+                        task.update_state(TaskState::Error {
+                            error: "Task completed, but copying results failed.".into(),
+                            n: 0,
+                        });
+                        true
+                    }
+                    None => false,
                 }
             }
 

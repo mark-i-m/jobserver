@@ -281,7 +281,7 @@ impl Server {
         let mut running_job_handles = HashMap::new();
         let mut to_remove = HashSet::new();
         let mut to_clone = HashSet::new(); // failed tasks we need to clone
-        let copying_flags = Arc::new(Mutex::new(HashSet::new()));
+        let copying_flags = Arc::new(Mutex::new(HashMap::new()));
         let (_copier_thread, copy_thread_queue) = copier::init(Arc::clone(&copying_flags));
 
         // We keep track of whether any task had a state change. If there was, then there is

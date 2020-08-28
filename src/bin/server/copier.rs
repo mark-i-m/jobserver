@@ -2,7 +2,7 @@
 
 use log::{debug, error, info, warn};
 
-use std::collections::{HashMap, HashSet, LinkedList};
+use std::collections::{HashMap, LinkedList};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -36,8 +36,8 @@ struct CopierThreadState {
     incoming: Arc<Mutex<CopierThreadQueue>>,
     /// Copy tasks that are currently running.
     ongoing: HashMap<u64, ResultsInfo>,
-    /// Used to notify the worker thread of completion.
-    copying_flags: Arc<Mutex<HashSet<u64>>>,
+    /// Used to notify the worker thread of completion. `true` indicates success; `false` failure.
+    copying_flags: Arc<Mutex<HashMap<u64, bool>>>,
 }
 
 /// Info about a single copy job.
@@ -74,7 +74,7 @@ impl std::cmp::Eq for ResultsInfo {}
 
 /// Start the copier thread and return a handle.
 pub fn init(
-    copying_flags: Arc<Mutex<HashSet<u64>>>,
+    copying_flags: Arc<Mutex<HashMap<u64, bool>>>,
 ) -> (std::thread::JoinHandle<()>, Arc<Mutex<CopierThreadQueue>>) {
     let incoming = Arc::new(Mutex::new(LinkedList::new()));
     let state = CopierThreadState {
@@ -138,7 +138,7 @@ fn copier_thread(mut state: CopierThreadState) {
             match results_info.process.try_wait() {
                 Ok(Some(exit)) if exit.success() => {
                     info!("Finished copying results for job {}.", jid,);
-                    state.copying_flags.lock().unwrap().insert(*jid);
+                    state.copying_flags.lock().unwrap().insert(*jid, true);
                     to_remove.push(*jid);
                 }
                 Ok(Some(exit)) => {
@@ -161,7 +161,7 @@ fn copier_thread(mut state: CopierThreadState) {
                             "Copying results for job {} failed after {} attempts.",
                             jid, RETRIES
                         );
-                        state.copying_flags.lock().unwrap().insert(*jid);
+                        state.copying_flags.lock().unwrap().insert(*jid, false);
                     }
                     to_remove.push(*jid);
                 }
@@ -182,7 +182,7 @@ fn copier_thread(mut state: CopierThreadState) {
                             "Copying results for job {} failed after {} attempts.",
                             jid, RETRIES
                         );
-                        state.copying_flags.lock().unwrap().insert(*jid);
+                        state.copying_flags.lock().unwrap().insert(*jid, false);
                     }
                     to_remove.push(*jid);
                 }
@@ -206,7 +206,7 @@ fn copier_thread(mut state: CopierThreadState) {
                                 "Copying results for job {} failed after {} attempts.",
                                 jid, RETRIES
                             );
-                            state.copying_flags.lock().unwrap().insert(*jid);
+                            state.copying_flags.lock().unwrap().insert(*jid, false);
                             to_remove.push(*jid);
                         }
                     } else {
