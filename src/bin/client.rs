@@ -491,11 +491,31 @@ fn main() {
     run_inner(addr, &matches)
 }
 
+fn pretty_print_response(resp: protocol::response::ResponseType) {
+    use protocol::{response::ResponseType::*, *};
+
+    match resp {
+        Okresp(_) => println!("OK"),
+        Mresp(machine_resp) => println!("{:#?}", machine_resp),
+        Jresp(jobs_resp) => println!("{:#?}", jobs_resp),
+        Vresp(VarsResp { vars }) => println!("{:#?}", vars),
+        Jiresp(JobIdResp { jid }) => println!("OK: {}", jid),
+        Miresp(MatrixIdResp { id }) => println!("OK: {}", id),
+        Jsresp(job_status) => println!("{:#?}", job_status),
+        Msresp(matrix_status) => println!("{:#?}", matrix_status),
+        Nsmresp(_) => println!("No such machine."),
+        Nsjresp(_) => println!("No such job."),
+        Nsmatresp(_) => println!("No such matrix."),
+        Nwresp(_) => println!("Task is not waiting."),
+        Ierr(_) => println!("Internal error."),
+    };
+}
+
 fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ping", _) => {
             let response = make_request(addr, Preq(protocol::PingRequest {}));
-            println!("Server response: {:#?}", response);
+            pretty_print_response(response);
         }
 
         ("completions", Some(sub_m)) => {
@@ -545,7 +565,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             });
 
             let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+            pretty_print_response(response);
         }
 
         ("rm", Some(sub_m)) => {
@@ -553,7 +573,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 for m in addrs {
                     let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
                     let response = make_request(addr, req);
-                    println!("Server response: {:#?}", response);
+                    pretty_print_response(response);
                 }
             }
 
@@ -565,7 +585,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 for m in addrs {
                     let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
                     let response = make_request(addr, req);
-                    println!("Server response: {:#?}", response);
+                    pretty_print_response(response);
                 }
             }
         }
@@ -607,7 +627,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 });
 
                 let response = make_request(addr, req);
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
             }
         }
 
@@ -619,7 +639,7 @@ fn handle_var_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(_sub_m)) => {
             let response = make_request(addr, Lvreq(protocol::ListVarsRequest {}));
-            println!("Server response: {:#?}", response);
+            pretty_print_response(response);
         }
 
         ("set", Some(sub_m)) => {
@@ -629,7 +649,7 @@ fn handle_var_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             });
 
             let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+            pretty_print_response(response);
         }
 
         _ => unreachable!(),
@@ -666,7 +686,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 });
 
                 let response = make_request(addr, req);
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
             }
         }
 
@@ -677,7 +697,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 });
 
                 let response = make_request(addr, req);
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
             }
         }
 
@@ -688,7 +708,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 });
 
                 let response = make_request(addr, req);
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
             }
         }
 
@@ -778,7 +798,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 });
 
                 let response = make_request(addr, req);
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
             }
         }
 
@@ -792,7 +812,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         remove: forget,
                     }),
                 );
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
             }
         }
 
@@ -809,7 +829,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                             jid: Jid::from(jid).into(),
                         }),
                     );
-                    println!("Server response: {:#?}", response);
+                    pretty_print_response(response);
                 }
             }
         }
@@ -823,7 +843,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         remove: false,
                     }),
                 );
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
 
                 let response = make_request(
                     addr,
@@ -831,7 +851,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         jid: Jid::from(jid).into(),
                     }),
                 );
-                println!("Server response: {:#?}", response);
+                pretty_print_response(response);
             }
         }
 
@@ -914,7 +934,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             });
 
             let response = make_request(addr, req);
-            println!("Server response: {:#?}", response);
+            pretty_print_response(response);
         }
 
         ("stat", Some(sub_m)) => {
@@ -933,7 +953,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     let jobs = list_jobs(addr, JobListMode::Jids(jobs));
                     print_jobs(jobs, show_output, false);
                 }
-                _ => println!("Server response: {:#?}", response),
+                _ => pretty_print_response(response),
             }
         }
 
@@ -959,7 +979,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     let jobs = jobs.into_iter().map(|job| job.expect_job()).collect();
                     make_matrix_csv(file, id, variables, jobs);
                 }
-                _ => println!("Server response: {:#?}", response),
+                _ => pretty_print_response(response),
             }
         }
 
