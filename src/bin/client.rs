@@ -215,11 +215,18 @@ fn build_cli() -> clap::App<'static, 'static> {
                         .takes_value(true)
                         .help("The class of machines to remove"),
                 )
+                .arg(
+                    Arg::with_name("ADDR_FILE")
+                        .short("f")
+                        .long("file")
+                        .takes_value(true)
+                        .help("A file with one IP:PORT per line"),
+                )
                 .group(
                     ArgGroup::with_name("MACHINES")
                         .required(true)
                         .multiple(true)
-                        .args(&["ADDR", "CLASS"]),
+                        .args(&["ADDR", "CLASS", "ADDR_FILE"]),
                 ),
         )
         .subcommand(
@@ -581,6 +588,19 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 let addrs: Vec<String> = list_avail(addr)
                     .into_iter()
                     .filter_map(|m| if m.class == class { Some(m.addr) } else { None })
+                    .collect();
+                for m in addrs {
+                    let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
+                    let response = make_request(addr, req);
+                    pretty_print_response(response);
+                }
+            }
+
+            if let Some(addr_file) = sub_m.value_of("ADDR_FILE") {
+                let addrs: Vec<String> = std::fs::read_to_string(addr_file)
+                    .expect("unable to read address file")
+                    .split_whitespace()
+                    .map(|line| line.trim().to_owned())
                     .collect();
                 for m in addrs {
                     let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
