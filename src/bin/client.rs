@@ -362,13 +362,15 @@ fn build_cli() -> clap::App<'static, 'static> {
 
             (@subcommand ls =>
                 (about: "List all jobs.")
-                (@arg JID: {is_usize} ... conflicts_with[N]
+                (@arg JID: {is_usize} ... conflicts_with[N] conflicts_with[RUNNING]
                  "The job IDs of the jobs to list. Unknown job IDs are ignored. \
                   List all jobs if omitted.")
-                (@arg N: -n +takes_value {is_usize} conflicts_with[JID]
-                 "Show the last N jobs (default: 50)")
+                (@arg N: -n +takes_value {is_usize} conflicts_with[JID] conflicts_with[RUNNING]
+                 "List the last N jobs (default: 50)")
                 (@arg AFTER: -a --after requires[JID]
                  "List all jobs after the highest given JID.")
+                (@arg RUNNING: -r --running conflicts_with[JID] conflicts_with[N]
+                 "List all running jobs.")
                 (@arg OUTPUT: --output
                  "Show full output paths.")
             )
@@ -684,6 +686,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(DEFAULT_LS_N);
             let is_after = sub_m.is_present("AFTER");
+            let is_running = sub_m.is_present("RUNNING");
             let show_output = sub_m.is_present("OUTPUT");
             let jids = sub_m
                 .values_of("JID")
@@ -694,7 +697,13 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         JobListMode::Jids(v.map(Jid::from).collect())
                     }
                 })
-                .unwrap_or(JobListMode::Suffix(suffix));
+                .unwrap_or_else(|| {
+                    if is_running {
+                        JobListMode::Running
+                    } else {
+                        JobListMode::Suffix(suffix)
+                    }
+                });
             let jobs = list_jobs(addr, jids);
             print_jobs(jobs, show_output, true);
         }
