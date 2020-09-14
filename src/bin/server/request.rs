@@ -392,6 +392,19 @@ impl Server {
                             }
                         })
                         .collect();
+                    let running: Vec<_> = self
+                        .tasks
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .filter_map(|task| {
+                            if matches!(task.state, TaskState::Running{..}) {
+                                Some(task.jid)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
                     let matrices: Vec<_> = self
                         .matrices
                         .lock()
@@ -414,8 +427,8 @@ impl Server {
                     Jresp(protocol::JobsResp {
                         jobs: tasks,
                         matrices,
+                        running,
                     })
-                    // drop locks
                 }
 
                 Hjreq(protocol::HoldJobRequest { jid }) => {

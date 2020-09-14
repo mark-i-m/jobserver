@@ -737,18 +737,11 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             let jids: Vec<_> = if sub_m.is_present("JID") {
                 sub_m.values_of("JID").unwrap().map(Jid::from).collect()
             } else {
-                list_jobs(addr, JobListMode::Flat)
+                list_jobs(addr, JobListMode::Running)
                     .into_iter()
                     .map(|item| match item {
-                        JobOrMatrixInfo::Job(job) => job,
+                        JobOrMatrixInfo::Job(job) => Jid::from(job.jid),
                         _ => unreachable!(),
-                    })
-                    .filter_map(|job| {
-                        if let Status::Running { .. } = job.status {
-                            Some(Jid::from(job.jid))
-                        } else {
-                            None
-                        }
                     })
                     .collect()
             };
@@ -1086,10 +1079,6 @@ struct MatrixInfo {
 
 #[derive(Debug)]
 enum JobListMode {
-    /// List all jobs in a flat way -- as `JobOrMatrixInfo::Job`. This useful when you just want to
-    /// iterate over all tasks.
-    Flat,
-
     /// List a suffix of jobs (the `usize` is the length of the suffix).
     Suffix(usize),
 
@@ -1098,6 +1087,9 @@ enum JobListMode {
 
     /// List only JIDs in the set.
     Jids(BTreeSet<Jid>),
+
+    /// List only running jobs.
+    Running,
 }
 
 #[derive(Debug)]
@@ -1118,47 +1110,52 @@ impl JobOrMatrixInfo {
 fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
     // Collect info about existing jobs and matrices.
     let job_ids = make_request(addr, Ljreq(protocol::ListJobsRequest {}));
-    let (jids, mut matrices): (Vec<_>, HashMap<_, _>) = if let Jresp(protocol::JobsResp {
-        jobs,
-        matrices,
-    }) = job_ids
-    {
-        let matrices = matrices
-            .into_iter()
-            .map(
-                |protocol::MatrixStatusResp {
-                     cmd,
-                     class,
-                     id,
-                     jobs,
-                     variables,
-                     cp_resultsopt,
-                 }| {
-                    (
-                        Jid::new(id),
-                        MatrixInfoShallow {
-                            cmd,
-                            class,
-                            id: Jid::new(id),
-                            jobs: jobs.into_iter().map(Jid::new).collect(),
-                            cp_results: cp_resultsopt
-                                .map(|protocol::matrix_status_resp::CpResultsopt::CpResults(s)| s),
-                            variables: variables
-                                .into_iter()
-                                .map(|(var, protocol::MatrixVarValues { values })| (var, values))
-                                .collect(),
-                        },
-                    )
-                },
-            )
-            .collect();
+    let (jids, mut matrices, running): (Vec<_>, HashMap<_, _>, _) =
+        if let Jresp(protocol::JobsResp {
+            jobs,
+            matrices,
+            running,
+        }) = job_ids
+        {
+            let matrices = matrices
+                .into_iter()
+                .map(
+                    |protocol::MatrixStatusResp {
+                         cmd,
+                         class,
+                         id,
+                         jobs,
+                         variables,
+                         cp_resultsopt,
+                     }| {
+                        (
+                            Jid::new(id),
+                            MatrixInfoShallow {
+                                cmd,
+                                class,
+                                id: Jid::new(id),
+                                jobs: jobs.into_iter().map(Jid::new).collect(),
+                                cp_results: cp_resultsopt.map(
+                                    |protocol::matrix_status_resp::CpResultsopt::CpResults(s)| s,
+                                ),
+                                variables: variables
+                                    .into_iter()
+                                    .map(|(var, protocol::MatrixVarValues { values })| {
+                                        (var, values)
+                                    })
+                                    .collect(),
+                            },
+                        )
+                    },
+                )
+                .collect();
 
-        let jobs = jobs.into_iter().map(Jid::new).collect();
+            let jobs = jobs.into_iter().map(Jid::new).collect();
 
-        (jobs, matrices)
-    } else {
-        unreachable!();
-    };
+            (jobs, matrices, running)
+        } else {
+            unreachable!();
+        };
 
     // Collate the infomation into a sorted list, and choose which ones to list further.
     let sorted_ids = {
@@ -1176,10 +1173,10 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
         .into_iter()
         .enumerate()
         .filter(|(i, j)| match mode {
-            JobListMode::Flat => true,
             JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
             JobListMode::After(jid) => *j >= jid,
             JobListMode::Jids(_) => false,
+            JobListMode::Running => running.contains(&j.jid()),
         })
         .map(|(_, j)| j)
         .collect();
@@ -1201,20 +1198,14 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
         {
             let matrix_job_info = jobs.into_iter().filter_map(|jid| stat_job(addr, jid));
 
-            if matches!(mode, JobListMode::Flat) {
-                for job_info in matrix_job_info {
-                    info.push(JobOrMatrixInfo::Job(job_info))
-                }
-            } else {
-                info.push(JobOrMatrixInfo::Matrix(MatrixInfo {
-                    id,
-                    cmd,
-                    class,
-                    jobs: matrix_job_info.collect(),
-                    cp_results,
-                    variables,
-                }))
-            }
+            info.push(JobOrMatrixInfo::Matrix(MatrixInfo {
+                id,
+                cmd,
+                class,
+                jobs: matrix_job_info.collect(),
+                cp_results,
+                variables,
+            }))
         } else if let Some(job_info) = stat_job(addr, id) {
             info.push(JobOrMatrixInfo::Job(job_info))
         }

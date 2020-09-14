@@ -209,6 +209,7 @@ message MachineStatus {
 message JobsResp {
     repeated uint64 jobs = 1;
     repeated MatrixStatusResp matrices = 2;
+    repeated uint64 running = 3;
 }
 
 // A list of variables and their values.
