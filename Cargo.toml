@@ -38,5 +38,5 @@ prost = "0.6"
 prost-build = "0.6"
 
 [profile.release]
-opt-level = 0
+opt-level = 1
 debug = true
