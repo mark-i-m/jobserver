@@ -7,7 +7,9 @@
   major version.
 - Added support for timing out jobs.
 - Added a shortcut for restarting a job.
+- Added `-r` flag to list all running jobs.
 - Fix some bugs
+- Bump the optimization level a bit
 
 ## 0.6.1
 
