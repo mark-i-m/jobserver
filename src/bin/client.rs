@@ -1119,7 +1119,7 @@ impl JobOrMatrixInfo {
 fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
     // Collect info about existing jobs and matrices.
     let job_ids = make_request(addr, Ljreq(protocol::ListJobsRequest {}));
-    let (jids, mut matrices, running): (Vec<_>, HashMap<_, _>, _) =
+    let (jids, mut matrices, running): (Vec<_>, HashMap<_, _>, Vec<_>) =
         if let Jresp(protocol::JobsResp {
             jobs,
             matrices,
@@ -1161,38 +1161,47 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
 
             let jobs = jobs.into_iter().map(Jid::new).collect();
 
+            let running = running.into_iter().map(Jid::new).collect();
+
             (jobs, matrices, running)
         } else {
             unreachable!();
         };
 
-    // Collate the infomation into a sorted list, and choose which ones to list further.
-    let sorted_ids = {
-        let mut ids: Vec<_> = jids
-            .iter()
-            .map(|k| *k)
-            .chain(matrices.keys().map(|k| *k))
+    // Collate the jids for which we will dig deeper.
+    let selected_ids = {
+        let sorted_ids = {
+            let mut ids: Vec<_> = jids
+                .iter()
+                .map(|k| *k)
+                .chain(matrices.keys().map(|k| *k))
+                .collect();
+            ids.sort();
+            ids
+        };
+
+        let len = sorted_ids.len();
+        let mut selected_ids: Vec<_> = sorted_ids
+            .into_iter()
+            .enumerate()
+            .filter(|(i, j)| match mode {
+                JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
+                JobListMode::After(jid) => *j >= jid,
+                JobListMode::Jids(_) | JobListMode::Running => false,
+            })
+            .map(|(_, j)| j)
             .collect();
-        ids.sort();
-        ids
+
+        match mode {
+            JobListMode::Jids(ref jids) => {
+                selected_ids.extend(jids.iter());
+            }
+            JobListMode::Running => selected_ids.extend(running.iter()),
+            _ => {}
+        }
+
+        selected_ids
     };
-
-    let len = sorted_ids.len();
-    let mut selected_ids: Vec<_> = sorted_ids
-        .into_iter()
-        .enumerate()
-        .filter(|(i, j)| match mode {
-            JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
-            JobListMode::After(jid) => *j >= jid,
-            JobListMode::Jids(_) => false,
-            JobListMode::Running => running.contains(&j.jid()),
-        })
-        .map(|(_, j)| j)
-        .collect();
-
-    if let JobListMode::Jids(ref jids) = mode {
-        selected_ids.extend(jids.iter());
-    }
 
     let mut info = vec![];
     for id in selected_ids {
