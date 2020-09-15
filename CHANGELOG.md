@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+- Fix minor bugs
+
 ## 0.7.0
 
 - Matrices that have become empty because all of their jobs were forgotten will
