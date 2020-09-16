@@ -230,6 +230,43 @@ fn build_cli() -> clap::App<'static, 'static> {
                 ),
         )
         .subcommand(
+            SubCommand::with_name("mv")
+                .about("Remove the given machine(s) from their current class and add them to a new class.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .short("m")
+                        .long("machine")
+                        .takes_value(true)
+                        .multiple(true)
+                        .number_of_values(1)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .short("c")
+                        .long("class")
+                        .takes_value(true)
+                        .help("The class of machines to remove"),
+                )
+                .arg(
+                    Arg::with_name("ADDR_FILE")
+                        .short("f")
+                        .long("file")
+                        .takes_value(true)
+                        .help("A file with one IP:PORT per line"),
+                )
+                .group(
+                    ArgGroup::with_name("MACHINES")
+                        .required(true)
+                        .multiple(true)
+                        .args(&["ADDR", "CLASS", "ADDR_FILE"]),
+                )
+                .arg(
+                    Arg::with_name("NEW_CLASS").takes_value(true).required(true).help("The new class for the machines")
+                    )
+        )
+        .subcommand(
             SubCommand::with_name("setup")
                 .about("Set up the given machine using the given command")
                 .setting(AppSettings::ArgRequiredElseHelp)
@@ -560,6 +597,36 @@ fn generate_completions(shell: clap::Shell, outdir: &str, bin: Option<&str>) {
     build_cli().gen_completions(bin.unwrap_or("client"), shell, outdir)
 }
 
+/// Returns a list of machines from the given command line args.
+fn collect_machines_from_cmd(addr: &str, matches: &clap::ArgMatches<'_>) -> Vec<String> {
+    let mut addrs = vec![];
+
+    if let Some(args) = matches.values_of("ADDR") {
+        addrs.extend(args.map(Into::into));
+    }
+
+    if let Some(class) = matches.value_of("CLASS") {
+        addrs.extend(list_avail(addr).into_iter().filter_map(|m| {
+            if m.class == class {
+                Some(m.addr)
+            } else {
+                None
+            }
+        }))
+    }
+
+    if let Some(addr_file) = matches.value_of("ADDR_FILE") {
+        addrs.extend(
+            std::fs::read_to_string(addr_file)
+                .expect("unable to read address file")
+                .split_whitespace()
+                .map(|line| line.trim().to_owned()),
+        )
+    }
+
+    addrs
+}
+
 fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     match matches.subcommand() {
         ("ls", Some(_sub_m)) => {
@@ -577,38 +644,33 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             pretty_print_response(response);
         }
 
+        ("mv", Some(sub_m)) => {
+            let addrs = collect_machines_from_cmd(addr, sub_m);
+            let new_class = sub_m.value_of("NEW_CLASS").unwrap();
+
+            for m in addrs {
+                // Remove
+                let req = Rareq(protocol::RemoveAvailableRequest { addr: m.to_owned() });
+                let response = make_request(addr, req);
+                pretty_print_response(response);
+
+                // Add
+                let req = Mareq(protocol::MakeAvailableRequest {
+                    addr: m.to_owned(),
+                    class: new_class.into(),
+                });
+                let response = make_request(addr, req);
+                pretty_print_response(response);
+            }
+        }
+
         ("rm", Some(sub_m)) => {
-            if let Some(addrs) = sub_m.values_of("ADDR") {
-                for m in addrs {
-                    let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
-                    let response = make_request(addr, req);
-                    pretty_print_response(response);
-                }
-            }
+            let addrs = collect_machines_from_cmd(addr, sub_m);
 
-            if let Some(class) = sub_m.value_of("CLASS") {
-                let addrs: Vec<String> = list_avail(addr)
-                    .into_iter()
-                    .filter_map(|m| if m.class == class { Some(m.addr) } else { None })
-                    .collect();
-                for m in addrs {
-                    let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
-                    let response = make_request(addr, req);
-                    pretty_print_response(response);
-                }
-            }
-
-            if let Some(addr_file) = sub_m.value_of("ADDR_FILE") {
-                let addrs: Vec<String> = std::fs::read_to_string(addr_file)
-                    .expect("unable to read address file")
-                    .split_whitespace()
-                    .map(|line| line.trim().to_owned())
-                    .collect();
-                for m in addrs {
-                    let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
-                    let response = make_request(addr, req);
-                    pretty_print_response(response);
-                }
+            for m in addrs {
+                let req = Rareq(protocol::RemoveAvailableRequest { addr: m.into() });
+                let response = make_request(addr, req);
+                pretty_print_response(response);
             }
         }
 

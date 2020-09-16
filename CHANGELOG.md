@@ -2,7 +2,8 @@
 
 ## 0.7.1
 
-- Fix minor bugs
+- Added `machine mv` subcommand.
+- Fix minor bugs.
 
 ## 0.7.0
 
@@ -12,8 +13,8 @@
 - Added support for timing out jobs.
 - Added a shortcut for restarting a job.
 - Added `-r` flag to list all running jobs.
-- Fix some bugs
-- Bump the optimization level a bit
+- Fix some bugs.
+- Bump the optimization level a bit.
 
 ## 0.6.1
 
