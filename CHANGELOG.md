@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- Change the way results files are identified. The runner should now return a
+  common prefix of all files to be copied, and the jobserver will copy all
+  files with that prefix. In contrast, in the past, you had to return a
+  filepath with a glob.
+- The client now has some better support for manipulating said prefixes.
+
 ## 0.7.1
 
 - Added `machine mv` subcommand.

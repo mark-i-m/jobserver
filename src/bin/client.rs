@@ -477,10 +477,13 @@ fn build_cli() -> clap::App<'static, 'static> {
             )
 
             (@subcommand results =>
-                (about: "List the results path for each job.")
+                (about: "List the results path prefix for each job.")
                 (@setting ArgRequiredElseHelp)
                 (@arg JID: +required {is_usize} ...
                  "The job ID of the job")
+                (@arg SUFFIX: -s --suffix +takes_value
+                 "Print the prefix with the given suffix appended. \
+                  This is a convenience flag.")
             )
 
             (@subcommand matrix =>
@@ -953,6 +956,8 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 JobOrMatrixInfo::Matrix(mi) => mi.jobs,
             });
 
+            let suffix = sub_m.value_of("SUFFIX").unwrap_or("");
+
             for job in job_info {
                 use std::path::PathBuf;
 
@@ -969,7 +974,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         let path = PathBuf::from(cp_results)
                             .join(PathBuf::from(output).file_name().unwrap().to_str().unwrap());
 
-                        println!("{}", path.display());
+                        println!("{}{}", path.display(), suffix);
                     }
 
                     _ => {
