@@ -259,7 +259,7 @@ fn start_copy(
         .arg("-vzP")
         .arg("--rsh=ssh")
         .arg(&format!("--timeout={}", RSYNC_IO_TIMEOUT))
-        .arg(&format!("{}:{}", machine_ip, from))
+        .arg(&format!("{}:{}*", machine_ip, from))
         .arg(&to)
         .stdout(std::process::Stdio::from(log))
         .stderr(std::process::Stdio::from(log_err));
