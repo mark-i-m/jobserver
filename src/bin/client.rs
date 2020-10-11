@@ -1452,14 +1452,25 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
         const ELLIPSIS_WIDTH: usize = 3;
         const PADDING_WIDTH: usize = 2 * 6;
 
-        term_width as usize
-            - JID_WIDTH
-            - STATUS_WIDTH
-            - CLASS_WIDTH
-            - MACHINE_WIDTH
-            - OUTPUT_WIDTH
-            - ELLIPSIS_WIDTH
-            - PADDING_WIDTH
+        const ALTERNATE: usize = usize::MAX;
+
+        const TOTAL: usize = JID_WIDTH
+            + STATUS_WIDTH
+            + CLASS_WIDTH
+            + MACHINE_WIDTH
+            + OUTPUT_WIDTH
+            + ELLIPSIS_WIDTH
+            + PADDING_WIDTH;
+
+        let term_width = term_width as usize;
+
+        // If the the terminal is not wide enough, then we will have wrap-around anyway. Don't
+        // bother trying to make everything fit on one line. Instead, try to display everything.
+        if term_width > TOTAL {
+            term_width - TOTAL
+        } else {
+            ALTERNATE
+        }
     }
 
     fn truncate_cmd(cmd: &str, term_width: u16) -> String {
