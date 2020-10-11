@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+
+- Fixes a panic on "narrow" terminals.
+
 ## 0.8.0
 
 - Change the way results files are identified. The runner should now return a
