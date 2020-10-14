@@ -115,7 +115,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
 
                 (@group WHICH =>
                     (@attributes +required +multiple)
-                    (@arg ID: --id {is_usize} ...
+                    (@arg ID: --id +takes_value {is_usize} ...
                      "The job or matrix ID(s) for jobs to output.")
                     (@arg AFTER: --after {is_usize}
                      "Use all jobs whose IDs are >= AFTER.")
