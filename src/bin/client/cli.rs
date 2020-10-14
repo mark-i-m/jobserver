@@ -1,6 +1,6 @@
 //! Builds the application CLI.
 
-use clap::clap_app;
+use clap::{clap_app, App, AppSettings, Arg, ArgGroup, SubCommand};
 
 /// Validator for command line args that should be `usize`.
 fn is_usize(s: String) -> Result<(), String> {
@@ -106,10 +106,60 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
             )
 
             (@subcommand stat =>
-                (about: "Get information on the status of a job.")
+                (about: "Get structured information about a job or jobs. This command is \
+                 intended to be script-friendly. It allows mapping over jobs using scipts \
+                 in multiple ways, including mapping individual columns using the --*_map \
+                 flags, or using the --map to pass a script that receives a JSON of all \
+                 column information.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize} ...
-                 "The job ID of the job")
+
+                (@group WHICH =>
+                    (@attributes +required +multiple)
+                    (@arg ID: --id {is_usize} ...
+                     "The job or matrix ID(s) for jobs to output.")
+                    (@arg AFTER: --after {is_usize}
+                     "Use all jobs whose IDs are >= AFTER.")
+                    (@arg RUNNING: --running
+                     "Use all running jobs.")
+                )
+
+                (@group OUTPUT =>
+                    (@attributes +required)
+                    (@arg CSV: --csv
+                     "Print the output as a CSV")
+                    (@arg TEXT: --text
+                     "Print the output as plain text")
+                    (@arg JSON: --json
+                     "Print the output as JSON")
+                )
+
+                (@arg PJID: --jid "Output the job ID.")
+                (@arg PMID: --matrix "Output the matrix ID.")
+                (@arg PCMD: --cmd "Output the command.")
+                (@arg PCLASS: --class "Output the job's class.")
+                (@arg PMACHINE: --machine "Output the job's machine.")
+                (@arg PSTATUS: --status "Output the job's status.")
+                (@arg PERROR: --error "Output the job's error.")
+                (@arg PVARS: --vars "Output the job's variables.")
+                (@arg PRESULTS: --results "Output the job's results path.")
+                (@arg PSTART: --starttime "Output the job's start time.")
+                (@arg PEND: --endtime "Output the job's end time.")
+                (@arg PLOG: --log "Output the path to job's log.")
+
+                (@arg PJIDMAP: --jid_map +takes_value requires[PJID])
+                (@arg PMIDMAP: --matrix_map +takes_value requires[PMID])
+                (@arg PCMDMAP: --cmd_map +takes_value requires[PCMD])
+                (@arg PCLASSMAP: --class_map +takes_value requires[PCLASS])
+                (@arg PMACHINEMAP: --machine_map +takes_value requires[PMACHINE])
+                (@arg PSTATUSMAP: --status_map +takes_value requires[PSTATUS])
+                (@arg PERRORMAP: --error_map +takes_value requires[PERROR])
+                (@arg PVARSMAP: --vars_map +takes_value requires[PVARs])
+                (@arg PRESULTSMAP: --output_map +takes_value requires[PRESULTS])
+                (@arg PSTARTMAP: --starttime_map +takes_value requires[PSTART])
+                (@arg PENDMAP: --endtime_map +takes_value requires[PEND])
+                (@arg PLOGMAP: --log_map +takes_value requires[PLOG])
+
+                (@arg MAPPER: --mapper +takes_value)
             )
 
             (@subcommand hold =>

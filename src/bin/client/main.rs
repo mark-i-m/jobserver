@@ -388,16 +388,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             pretty::print_jobs(jobs, true);
         }
 
-        ("stat", Some(sub_m)) => {
-            for jid in sub_m.values_of("JID").unwrap() {
-                let req = Jsreq(protocol::JobStatusRequest {
-                    jid: Jid::from(jid).into(),
-                });
-
-                let response = make_request(addr, req);
-                pretty::print_response(response);
-            }
-        }
+        ("stat", Some(sub_m)) => stat::handle_stat_cmd(addr, sub_m),
 
         ("hold", Some(sub_m)) => {
             for jid in sub_m.values_of("JID").unwrap() {
@@ -676,6 +667,7 @@ struct JobInfo {
     cp_results: String,
     timestamp: DateTime<Utc>,
     done_timestamp: Option<DateTime<Utc>>,
+    log: String,
 }
 
 #[derive(Debug)]
@@ -717,15 +709,6 @@ enum JobListMode {
 enum JobOrMatrixInfo {
     Job(JobInfo),
     Matrix(MatrixInfo),
-}
-
-impl JobOrMatrixInfo {
-    pub fn expect_job(self) -> JobInfo {
-        match self {
-            JobOrMatrixInfo::Job(job_info) => job_info,
-            other => panic!("Expected job, got {:?}", other),
-        }
-    }
 }
 
 fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
@@ -856,7 +839,7 @@ fn stat_job(addr: &str, jid: Jid) -> Option<JobInfo> {
         variables,
         timestamp,
         donetsop,
-        log: _,
+        log,
         cp_results,
     }) = status
     {
@@ -872,6 +855,7 @@ fn stat_job(addr: &str, jid: Jid) -> Option<JobInfo> {
             timestamp: deserialize_ts(timestamp),
             done_timestamp: donetsop
                 .map(|protocol::job_status_resp::Donetsop::DoneTimestamp(ts)| deserialize_ts(ts)),
+            log,
         })
     } else {
         println!("Unable to find job {}", jid);
