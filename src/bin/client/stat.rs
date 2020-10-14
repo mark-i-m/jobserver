@@ -108,7 +108,7 @@ pub(crate) fn handle_stat_cmd(addr: &str, sub_m: &clap::ArgMatches<'_>) {
     // Print the output in the requested format.
     if sub_m.is_present("JSON") {
         print_json(jobs);
-    } else if sub_m.is_present("text") {
+    } else if sub_m.is_present("TEXT") {
         print_text(jobs);
     } else if sub_m.is_present("CSV") {
         print_csv(jobs);
