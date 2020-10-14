@@ -154,7 +154,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 (@arg PSTATUSMAP: --status_map +takes_value requires[PSTATUS])
                 (@arg PERRORMAP: --error_map +takes_value requires[PERROR])
                 (@arg PVARSMAP: --vars_map +takes_value requires[PVARs])
-                (@arg PRESULTSMAP: --output_map +takes_value requires[PRESULTS])
+                (@arg PRESULTSMAP: --results_map +takes_value requires[PRESULTS])
                 (@arg PSTARTMAP: --starttime_map +takes_value requires[PSTART])
                 (@arg PENDMAP: --endtime_map +takes_value requires[PEND])
                 (@arg PLOGMAP: --log_map +takes_value requires[PLOG])
