@@ -172,6 +172,13 @@ impl From<protocol::Status> for Status {
 fn build_cli() -> clap::App<'static, 'static> {
     use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
 
+    fn is_usize(s: String) -> Result<(), String> {
+        s.as_str()
+            .parse::<usize>()
+            .map(|_| ())
+            .map_err(|e| format!("{:?}", e))
+    }
+
     // We build this here because the macro doesn't have shorthand for some of the things we want
     // to do, most notably `multiple` with `number_values(1)`.
     let machine_cmds = App::new("machine")
@@ -1400,11 +1407,4 @@ fn make_matrix_csv_inner(
     csvw.flush()?;
 
     Ok(())
-}
-
-fn is_usize(s: String) -> Result<(), String> {
-    s.as_str()
-        .parse::<usize>()
-        .map(|_| ())
-        .map_err(|e| format!("{:?}", e))
 }
