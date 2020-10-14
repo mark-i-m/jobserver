@@ -26,6 +26,7 @@ struct TextJobInfo {
     start: String,
     end: String,
     log: String,
+    cp_results: String,
 }
 
 impl Status {
@@ -94,6 +95,7 @@ impl From<JobInfo> for TextJobInfo {
                 .map(|t| serialize_ts(t))
                 .unwrap_or_else(String::new),
             log: ji.log,
+            cp_results: ji.cp_results,
         }
     }
 }
@@ -203,6 +205,7 @@ fn map_jobs(sub_m: &clap::ArgMatches<'_>, jobs: Vec<JobInfo>) -> Vec<BTreeMap<St
             field_mapper!(job, "PSTARTMAP", start, sub_m);
             field_mapper!(job, "PENDMAP", end, sub_m);
             field_mapper!(job, "PLOGMAP", log, sub_m);
+            field_mapper!(job, "PCPRESMAP", cp_results, sub_m);
 
             // Pass the whole job to the mapper command.
             let job_json = serde_json::to_string(&job).expect("Unable to serialize to json.");
@@ -243,6 +246,7 @@ fn map_jobs(sub_m: &clap::ArgMatches<'_>, jobs: Vec<JobInfo>) -> Vec<BTreeMap<St
             drop_unselected!(job, "PSTART", start, sub_m);
             drop_unselected!(job, "PEND", end, sub_m);
             drop_unselected!(job, "PLOG", log, sub_m);
+            drop_unselected!(job, "PCPRES", cp_results, sub_m);
 
             job
         })

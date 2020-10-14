@@ -162,6 +162,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 (@arg PSTARTMAP: --starttime_map +takes_value requires[PSTART])
                 (@arg PENDMAP: --endtime_map +takes_value requires[PEND])
                 (@arg PLOGMAP: --log_map +takes_value requires[PLOG])
+                (@arg PCPRESMAP: --results_dir_map +takes_value requires[PCPRES])
 
                 (@arg MAPPER: --mapper +takes_value)
             )
