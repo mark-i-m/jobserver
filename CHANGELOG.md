@@ -3,9 +3,10 @@
 ## 0.9.0
 
 - Renamed `job matrix stat` to `job matrix ls` for better consistency with `job ls`.
-- Removed the `--output` flags of `job matrix ls` and `job ls`, along with the
-  `job matrix csv` and `j job results` commands. These have all been replaced
-  by the `job stat` command, which has gained significant super powers.
+- The following have all been removed in favor of the new `job stat` command:
+    - The `--output` flags of `job matrix ls` and `job ls`
+    - The `job matrix csv` subcommand
+    - The `job results` subcommand
 - The `job stat` command has gained significant super powers. It is now vastly
   more useful for post-processing results, and outputing data into a number of
   useful formats. See the help message for more info, but here are some
