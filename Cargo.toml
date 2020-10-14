@@ -15,7 +15,7 @@ categories = ["science"]
 
 [[bin]]
 name = "j"
-path = "src/bin/client.rs"
+path = "src/bin/client/main.rs"
 
 [[bin]]
 name = "expjobserver"
