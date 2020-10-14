@@ -294,7 +294,7 @@ fn print_csv_inner(jobs: Vec<BTreeMap<String, String>>) -> Result<(), failure::E
 
     // Write data with serde.
     for job in jobs.into_iter() {
-        csvw.serialize(job)
+        csvw.serialize(job.values().collect::<Vec<_>>())
             .expect("Unable to serialize job to CSV.");
     }
 
