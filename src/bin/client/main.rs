@@ -902,48 +902,6 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             }
         }
 
-        ("results", Some(sub_m)) => {
-            let jids = sub_m
-                .values_of("JID")
-                .unwrap()
-                .into_iter()
-                .map(|a| Jid::from(a))
-                .collect();
-
-            let job_info = list_jobs(addr, JobListMode::Jids(jids));
-            let job_info = job_info.into_iter().flat_map(|job| match job {
-                JobOrMatrixInfo::Job(ji) => vec![ji],
-                JobOrMatrixInfo::Matrix(mi) => mi.jobs,
-            });
-
-            let suffix = sub_m.value_of("SUFFIX").unwrap_or("");
-
-            for job in job_info {
-                use std::path::PathBuf;
-
-                match job {
-                    JobInfo {
-                        status:
-                            Status::Done {
-                                output: Some(output),
-                                ..
-                            },
-                        cp_results,
-                        ..
-                    } => {
-                        let path = PathBuf::from(cp_results)
-                            .join(PathBuf::from(output).file_name().unwrap().to_str().unwrap());
-
-                        println!("{}{}", path.display(), suffix);
-                    }
-
-                    _ => {
-                        println!("No output for job {}", job.jid);
-                    }
-                }
-            }
-        }
-
         ("matrix", Some(sub_m)) => handle_matrix_cmd(addr, sub_m),
 
         _ => unreachable!(),
@@ -986,7 +944,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
             pretty::print_response(response);
         }
 
-        ("stat", Some(sub_m)) => {
+        ("ls", Some(sub_m)) => {
             let response = make_request(
                 addr,
                 Smreq(protocol::StatMatrixRequest {
@@ -999,32 +957,6 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     let jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = list_jobs(addr, JobListMode::Jids(jobs));
                     pretty::print_jobs(jobs, false);
-                }
-                _ => pretty::print_response(response),
-            }
-        }
-
-        ("csv", Some(sub_m)) => {
-            let response = make_request(
-                addr,
-                Smreq(protocol::StatMatrixRequest {
-                    id: sub_m.value_of("ID").unwrap().parse().unwrap(),
-                }),
-            );
-
-            let file = sub_m.value_of("FILE").unwrap();
-
-            match response {
-                Msresp(protocol::MatrixStatusResp {
-                    jobs,
-                    id,
-                    variables,
-                    ..
-                }) => {
-                    let jobs = jobs.into_iter().map(Jid::new).collect();
-                    let jobs = list_jobs(addr, JobListMode::Jids(jobs));
-                    let jobs = jobs.into_iter().map(|job| job.expect_job()).collect();
-                    make_matrix_csv(file, id, variables, jobs);
                 }
                 _ => pretty::print_response(response),
             }
