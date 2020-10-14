@@ -408,8 +408,6 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "List all jobs after the highest given JID.")
                 (@arg RUNNING: -r --running conflicts_with[JID] conflicts_with[N]
                  "List all running jobs.")
-                (@arg OUTPUT: --output
-                 "Show full output paths.")
             )
 
             (@subcommand rm =>
@@ -476,16 +474,6 @@ fn build_cli() -> clap::App<'static, 'static> {
                  "Pass the log path to `tail -f`")
             )
 
-            (@subcommand results =>
-                (about: "List the results path prefix for each job.")
-                (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize} ...
-                 "The job ID of the job")
-                (@arg SUFFIX: -s --suffix +takes_value
-                 "Print the prefix with the given suffix appended. \
-                  This is a convenience flag.")
-            )
-
             (@subcommand matrix =>
                 (about: "Operations with job matrices")
                 (@setting SubcommandRequiredElseHelp)
@@ -514,18 +502,6 @@ fn build_cli() -> clap::App<'static, 'static> {
                     (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
                      "The matrix ID of the matrix")
-                    (@arg OUTPUT: --output
-                     "Show full output paths.")
-                )
-
-                (@subcommand csv =>
-                    (about: "Output information about the matrix and current/finished jobs \
-                     to a CSV file.")
-                    (@setting ArgRequiredElseHelp)
-                    (@arg ID: +required {is_usize}
-                     "The matrix ID of the matrix")
-                    (@arg FILE: +required
-                     "The name of the file to output to. The file is truncated if it exists.")
                 )
             )
         )
@@ -752,7 +728,6 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .unwrap_or(DEFAULT_LS_N);
             let is_after = sub_m.is_present("AFTER");
             let is_running = sub_m.is_present("RUNNING");
-            let show_output = sub_m.is_present("OUTPUT");
             let jids = sub_m
                 .values_of("JID")
                 .map(|v| {
@@ -770,7 +745,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     }
                 });
             let jobs = list_jobs(addr, jids);
-            print_jobs(jobs, show_output, true);
+            print_jobs(jobs, true);
         }
 
         ("stat", Some(sub_m)) => {
@@ -1027,8 +1002,6 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("stat", Some(sub_m)) => {
-            let show_output = sub_m.is_present("OUTPUT");
-
             let response = make_request(
                 addr,
                 Smreq(protocol::StatMatrixRequest {
@@ -1040,7 +1013,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 Msresp(protocol::MatrixStatusResp { jobs, .. }) => {
                     let jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = list_jobs(addr, JobListMode::Jids(jobs));
-                    print_jobs(jobs, show_output, false);
+                    print_jobs(jobs, false);
                 }
                 _ => pretty_print_response(response),
             }
@@ -1377,7 +1350,7 @@ fn list_avail(addr: &str) -> Vec<MachineInfo> {
     }
 }
 
-fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices: bool) {
+fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool) {
     // First, define some useful stuff...
 
     macro_rules! style {
@@ -1486,7 +1459,7 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
     }
 
     // Add a row to the table for a task.
-    fn add_task_row(table: &mut Table, job: JobInfo, show_output: bool, term_width: u16) {
+    fn add_task_row(table: &mut Table, job: JobInfo, term_width: u16) {
         let jid = if let Some(matrix) = job.matrix {
             format!("{}:{}", matrix, job.jid)
         } else {
@@ -1578,20 +1551,19 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
                 status:
                     Status::Done {
                         machine,
-                        output: Some(path),
+                        output: Some(_),
                     },
                 variables: _variables,
                 timestamp,
                 done_timestamp,
                 ..
             } => {
-                let path = if show_output { path } else { "Ready".into() };
                 let status = format!(
                     "Done ({})",
                     human_ts(done_timestamp.unwrap_or_else(|| timestamp) - timestamp)
                 );
                 let cmd = truncate_cmd(&cmd, term_width);
-                table.add_row(row![b->jid, Fg->status, class, cmd, machine, Fg->path]);
+                table.add_row(row![b->jid, Fg->status, class, cmd, machine, Fg->"Ready"]);
             }
 
             JobInfo {
@@ -1730,15 +1702,13 @@ fn print_jobs(items: Vec<JobOrMatrixInfo>, show_output: bool, collapse_matrices:
 
     for item in items.into_iter() {
         match item {
-            JobOrMatrixInfo::Job(job_info) => {
-                add_task_row(&mut table, job_info, show_output, term_width)
-            }
+            JobOrMatrixInfo::Job(job_info) => add_task_row(&mut table, job_info, term_width),
             JobOrMatrixInfo::Matrix(matrix_info) => {
                 if collapse_matrices {
                     add_matrix_row(&mut table, matrix_info, term_width);
                 } else {
                     for job_info in matrix_info.jobs.into_iter() {
-                        add_task_row(&mut table, job_info, show_output, term_width);
+                        add_task_row(&mut table, job_info, term_width);
                     }
                 }
             }
