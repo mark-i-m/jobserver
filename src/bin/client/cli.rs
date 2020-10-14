@@ -2,167 +2,15 @@
 
 use clap::clap_app;
 
+/// Validator for command line args that should be `usize`.
+fn is_usize(s: String) -> Result<(), String> {
+    s.as_str()
+        .parse::<usize>()
+        .map(|_| ())
+        .map_err(|e| format!("{:?}", e))
+}
+
 pub(crate) fn build() -> clap::App<'static, 'static> {
-    use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
-
-    fn is_usize(s: String) -> Result<(), String> {
-        s.as_str()
-            .parse::<usize>()
-            .map(|_| ())
-            .map_err(|e| format!("{:?}", e))
-    }
-
-    // We build this here because the macro doesn't have shorthand for some of the things we want
-    // to do, most notably `multiple` with `number_values(1)`.
-    let machine_cmds = App::new("machine")
-        .about("Operations on the available pool of machines.")
-        .setting(AppSettings::SubcommandRequiredElseHelp)
-        .subcommand(
-            SubCommand::with_name("add")
-                .about("Make the given machine available with the given class.")
-                .setting(AppSettings::ArgRequiredElseHelp)
-                .arg(
-                    Arg::with_name("ADDR")
-                        .required(true)
-                        .help("The IP:PORT of the machine"),
-                )
-                .arg(
-                    Arg::with_name("CLASS")
-                        .required(true)
-                        .help("The class of the machine"),
-                ),
-        )
-        .subcommand(SubCommand::with_name("ls").about("List available machines."))
-        .subcommand(
-            SubCommand::with_name("rm")
-                .about("Remove the given machine or class of machines from the available pool.")
-                .setting(AppSettings::ArgRequiredElseHelp)
-                .arg(
-                    Arg::with_name("ADDR")
-                        .short("m")
-                        .long("machine")
-                        .takes_value(true)
-                        .multiple(true)
-                        .number_of_values(1)
-                        .help("The IP:PORT of the machine"),
-                )
-                .arg(
-                    Arg::with_name("CLASS")
-                        .short("c")
-                        .long("class")
-                        .takes_value(true)
-                        .help("The class of machines to remove"),
-                )
-                .arg(
-                    Arg::with_name("ADDR_FILE")
-                        .short("f")
-                        .long("file")
-                        .takes_value(true)
-                        .help("A file with one IP:PORT per line"),
-                )
-                .group(
-                    ArgGroup::with_name("MACHINES")
-                        .required(true)
-                        .multiple(true)
-                        .args(&["ADDR", "CLASS", "ADDR_FILE"]),
-                ),
-        )
-        .subcommand(
-            SubCommand::with_name("mv")
-                .about("Remove the given machine(s) from their current class and add them to a new class.")
-                .setting(AppSettings::ArgRequiredElseHelp)
-                .arg(
-                    Arg::with_name("ADDR")
-                        .short("m")
-                        .long("machine")
-                        .takes_value(true)
-                        .multiple(true)
-                        .number_of_values(1)
-                        .help("The IP:PORT of the machine"),
-                )
-                .arg(
-                    Arg::with_name("CLASS")
-                        .short("c")
-                        .long("class")
-                        .takes_value(true)
-                        .help("The class of machines to remove"),
-                )
-                .arg(
-                    Arg::with_name("ADDR_FILE")
-                        .short("f")
-                        .long("file")
-                        .takes_value(true)
-                        .help("A file with one IP:PORT per line"),
-                )
-                .group(
-                    ArgGroup::with_name("MACHINES")
-                        .required(true)
-                        .multiple(true)
-                        .args(&["ADDR", "CLASS", "ADDR_FILE"]),
-                )
-                .arg(
-                    Arg::with_name("NEW_CLASS").takes_value(true).required(true).help("The new class for the machines")
-                    )
-        )
-        .subcommand(
-            SubCommand::with_name("setup")
-                .about("Set up the given machine using the given command")
-                .setting(AppSettings::ArgRequiredElseHelp)
-                .arg(
-                    Arg::with_name("ADDR")
-                        .short("m")
-                        .long("machine")
-                        .takes_value(true)
-                        .multiple(true)
-                        .number_of_values(1)
-                        .help("The IP:PORT of the machine"),
-                )
-                .arg(
-                    Arg::with_name("ADDR_FILE")
-                        .short("f")
-                        .long("file")
-                        .takes_value(true)
-                        .help("A file with one IP:PORT per line"),
-                )
-                .arg(
-                    Arg::with_name("EXISTING")
-                        .short("e")
-                        .long("existing")
-                        .requires("CLASS")
-                        .help(
-                            "Re-setup machines of the given class, \
-                             rather than setting up new machines.",
-                        ),
-                )
-                .group(ArgGroup::with_name("MACHINES").required(true).args(&[
-                    "ADDR",
-                    "ADDR_FILE",
-                    "EXISTING",
-                ]))
-                .arg(
-                    Arg::with_name("CMD")
-                        .required(true)
-                        .multiple(true)
-                        .help("The setup commands, each as a single string"),
-                )
-                .arg(
-                    Arg::with_name("CLASS")
-                        .short("c")
-                        .long("class")
-                        .takes_value(true)
-                        .help("If passed, the machine is added to the class after setup."),
-                )
-                .arg(
-                    Arg::with_name("TIMEOUT")
-                        .long("timeout")
-                        .takes_value(true)
-                        .help(
-                            "If passed, time out the setup task after TIMEOUT minutes \
-                             total for all commands.",
-                        ),
-                ),
-        );
-
     (clap_app! { client =>
         (about: "CLI client for the jobserver")
         (@setting SubcommandRequiredElseHelp)
@@ -343,5 +191,156 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 )
             )
         )
-    }).subcommand(machine_cmds)
+    }).subcommand(build_machine_subcommand())
+}
+
+fn build_machine_subcommand() -> clap::App<'static, 'static> {
+    App::new("machine")
+        .about("Operations on the available pool of machines.")
+        .setting(AppSettings::SubcommandRequiredElseHelp)
+        .subcommand(
+            SubCommand::with_name("add")
+                .about("Make the given machine available with the given class.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .required(true)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .required(true)
+                        .help("The class of the machine"),
+                ),
+        )
+        .subcommand(SubCommand::with_name("ls").about("List available machines."))
+        .subcommand(
+            SubCommand::with_name("rm")
+                .about("Remove the given machine or class of machines from the available pool.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .short("m")
+                        .long("machine")
+                        .takes_value(true)
+                        .multiple(true)
+                        .number_of_values(1)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .short("c")
+                        .long("class")
+                        .takes_value(true)
+                        .help("The class of machines to remove"),
+                )
+                .arg(
+                    Arg::with_name("ADDR_FILE")
+                        .short("f")
+                        .long("file")
+                        .takes_value(true)
+                        .help("A file with one IP:PORT per line"),
+                )
+                .group(
+                    ArgGroup::with_name("MACHINES")
+                        .required(true)
+                        .multiple(true)
+                        .args(&["ADDR", "CLASS", "ADDR_FILE"]),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("mv")
+                .about("Remove the given machine(s) from their current class and add them to a new class.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .short("m")
+                        .long("machine")
+                        .takes_value(true)
+                        .multiple(true)
+                        .number_of_values(1)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .short("c")
+                        .long("class")
+                        .takes_value(true)
+                        .help("The class of machines to remove"),
+                )
+                .arg(
+                    Arg::with_name("ADDR_FILE")
+                        .short("f")
+                        .long("file")
+                        .takes_value(true)
+                        .help("A file with one IP:PORT per line"),
+                )
+                .group(
+                    ArgGroup::with_name("MACHINES")
+                        .required(true)
+                        .multiple(true)
+                        .args(&["ADDR", "CLASS", "ADDR_FILE"]),
+                )
+                .arg(
+                    Arg::with_name("NEW_CLASS").takes_value(true).required(true).help("The new class for the machines")
+                    )
+        )
+        .subcommand(
+            SubCommand::with_name("setup")
+                .about("Set up the given machine using the given command")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("ADDR")
+                        .short("m")
+                        .long("machine")
+                        .takes_value(true)
+                        .multiple(true)
+                        .number_of_values(1)
+                        .help("The IP:PORT of the machine"),
+                )
+                .arg(
+                    Arg::with_name("ADDR_FILE")
+                        .short("f")
+                        .long("file")
+                        .takes_value(true)
+                        .help("A file with one IP:PORT per line"),
+                )
+                .arg(
+                    Arg::with_name("EXISTING")
+                        .short("e")
+                        .long("existing")
+                        .requires("CLASS")
+                        .help(
+                            "Re-setup machines of the given class, \
+                             rather than setting up new machines.",
+                        ),
+                )
+                .group(ArgGroup::with_name("MACHINES").required(true).args(&[
+                    "ADDR",
+                    "ADDR_FILE",
+                    "EXISTING",
+                ]))
+                .arg(
+                    Arg::with_name("CMD")
+                        .required(true)
+                        .multiple(true)
+                        .help("The setup commands, each as a single string"),
+                )
+                .arg(
+                    Arg::with_name("CLASS")
+                        .short("c")
+                        .long("class")
+                        .takes_value(true)
+                        .help("If passed, the machine is added to the class after setup."),
+                )
+                .arg(
+                    Arg::with_name("TIMEOUT")
+                        .long("timeout")
+                        .takes_value(true)
+                        .help(
+                            "If passed, time out the setup task after TIMEOUT minutes \
+                             total for all commands.",
+                        ),
+                ),
+        )
 }
