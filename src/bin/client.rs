@@ -497,7 +497,7 @@ fn build_cli() -> clap::App<'static, 'static> {
                       the job killed.")
                 )
 
-                (@subcommand stat =>
+                (@subcommand ls =>
                     (about: "Get information on the status of a matrix.")
                     (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
