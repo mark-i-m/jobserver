@@ -111,7 +111,8 @@ pub(crate) fn handle_stat_cmd(addr: &str, sub_m: &clap::ArgMatches<'_>) {
     if sub_m.is_present("JSON") {
         print_json(jobs);
     } else if sub_m.is_present("TEXT") {
-        print_text(jobs);
+        let headers = sub_m.is_present("SKIPHEAD");
+        print_text(jobs, headers);
     } else if sub_m.is_present("CSV") {
         print_csv(jobs);
     } else {
@@ -258,12 +259,14 @@ fn print_json(jobs: Vec<BTreeMap<String, String>>) {
     println!("{}", json_str);
 }
 
-fn print_text(jobs: Vec<BTreeMap<String, String>>) {
+fn print_text(jobs: Vec<BTreeMap<String, String>>, headers: bool) {
     // Print some headers.
-    for key in jobs.first().unwrap().keys() {
-        print!("{}\t", key);
+    if headers {
+        for key in jobs.first().unwrap().keys() {
+            print!("{}\t", key);
+        }
+        println!();
     }
-    println!();
 
     // Print the data, one job per line.
     for job in jobs.into_iter() {

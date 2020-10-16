@@ -165,6 +165,9 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 (@arg PCPRESMAP: --results_dir_map +takes_value requires[PCPRES])
 
                 (@arg MAPPER: --mapper +takes_value)
+
+                (@arg SKIPHEAD: --no_headers requires[TEXT]
+                 "Don't print column headers in text mode.")
             )
 
             (@subcommand hold =>
