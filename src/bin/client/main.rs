@@ -569,7 +569,8 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 };
 
                 // Get the file names to copy.
-                let log_fname = PathBuf::from(job.log);
+                let log_fname = PathBuf::from(&job.log);
+                let err_log_fname = PathBuf::from(job.log + ".err");
                 let results_dir = PathBuf::from(job.cp_results);
                 let results_prefix = match job.status {
                     Status::Done {
@@ -602,6 +603,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     .collect::<Vec<_>>();
 
                 results_fnames.push(log_fname);
+                results_fnames.push(err_log_fname);
 
                 // Print for sanity.
                 print!("Job {}: ", job.jid);
@@ -610,7 +612,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     .for_each(|f| print!("{} ", f.display()));
                 println!();
 
-                // Move the files.
+                // Copy the files.
                 fs_extra::copy_items(
                     &results_fnames,
                     to_path,
