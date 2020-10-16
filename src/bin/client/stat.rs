@@ -111,7 +111,7 @@ pub(crate) fn handle_stat_cmd(addr: &str, sub_m: &clap::ArgMatches<'_>) {
     if sub_m.is_present("JSON") {
         print_json(jobs);
     } else if sub_m.is_present("TEXT") {
-        let headers = sub_m.is_present("SKIPHEAD");
+        let headers = !sub_m.is_present("SKIPHEAD");
         print_text(jobs, headers);
     } else if sub_m.is_present("CSV") {
         print_csv(jobs);
