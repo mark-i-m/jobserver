@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::path::PathBuf;
 
 #[cfg(target_family = "unix")]
 use std::os::unix::process::CommandExt;
@@ -549,6 +550,78 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         }
 
         ("matrix", Some(sub_m)) => handle_matrix_cmd(addr, sub_m),
+
+        ("cpresults", Some(sub_m)) => {
+            let to_path = sub_m.value_of("TO").unwrap();
+            let jobs = sub_m.values_of("JID").unwrap().map(Jid::from).collect();
+            let jobs = list_jobs(addr, JobListMode::Jids(jobs));
+
+            println!("Copying results to {}", to_path);
+
+            // Copy results for each job.
+            for job in jobs.into_iter() {
+                let job = match job {
+                    JobOrMatrixInfo::Matrix(mi) => {
+                        println!("ID {} is a matrix. Skipping.", mi.id);
+                        continue;
+                    }
+                    JobOrMatrixInfo::Job(ji) => ji,
+                };
+
+                // Get the file names to copy.
+                let log_fname = PathBuf::from(job.log);
+                let results_dir = PathBuf::from(job.cp_results);
+                let results_prefix = match job.status {
+                    Status::Done {
+                        output: Some(path), ..
+                    } => {
+                        // We want to get just the last component of the path, not the directories.
+                        PathBuf::from(path)
+                    }
+                    _ => {
+                        println!("Job {} does not have results.", job.jid);
+                        continue;
+                    }
+                };
+                let mut results_prefix = results_dir.join(
+                    results_prefix
+                        .file_name()
+                        .expect("Unable to get filename component of results path."),
+                );
+                {
+                    let rp = results_prefix.set_extension("*");
+                    assert!(rp);
+                }
+                let results_glob = results_prefix
+                    .into_os_string()
+                    .into_string()
+                    .expect("Path is not a string.");
+                let mut results_fnames = glob::glob(&results_glob)
+                    .expect("Unable to parse glob.")
+                    .map(|gr| gr.expect("Error iterating glob."))
+                    .collect::<Vec<_>>();
+
+                results_fnames.push(log_fname);
+
+                // Print for sanity.
+                print!("Job {}: ", job.jid);
+                results_fnames
+                    .iter()
+                    .for_each(|f| print!("{} ", f.display()));
+                println!();
+
+                // Move the files.
+                fs_extra::copy_items(
+                    &results_fnames,
+                    to_path,
+                    &fs_extra::dir::CopyOptions {
+                        overwrite: true,
+                        ..fs_extra::dir::CopyOptions::new()
+                    },
+                )
+                .expect("Unable to copy items");
+            }
+        }
 
         _ => unreachable!(),
     }

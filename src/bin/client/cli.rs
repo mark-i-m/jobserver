@@ -245,6 +245,16 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                      "The matrix ID of the matrix")
                 )
             )
+
+            (@subcommand cpresults =>
+                (about: "Copy output and logs from the given task to the given location.")
+                (@setting SubcommandRequiredElseHelp)
+
+                (@arg JID: +required {is_usize} ...
+                 "The job ID of the job for which to copy results.")
+                (@arg TO: +required
+                 "The path to copy the results to.")
+            )
         )
     }).subcommand(build_machine_subcommand())
 }

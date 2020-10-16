@@ -63,6 +63,8 @@
       ```sh
       > j job restart $(j job stat --text --jid --status $EXPERIMENT_JIDS | grep Failed | awk '{print $1}')
       ```
+- Added the `job mvresults` subcommand to copy all file associated with a task
+  to a new location.
 
 ## 0.8.1
 
