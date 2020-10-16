@@ -248,7 +248,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
 
             (@subcommand cpresults =>
                 (about: "Copy output and logs from the given task to the given location.")
-                (@setting SubcommandRequiredElseHelp)
+                (@setting ArgRequiredElseHelp)
 
                 (@arg TO: +required
                  "The path to copy the results to.")
