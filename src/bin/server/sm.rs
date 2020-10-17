@@ -18,6 +18,8 @@ use super::{
     JobProcessInfo, MachineStatus, Server, Task, TaskState, TaskType,
 };
 
+const UNKNOWN_HOST_ERROR_CLASS: &str = "error-unknown-host";
+
 impl Server {
     /// Attempts to drive the given task's state machine forward one step.
     pub fn try_drive_sm(
@@ -91,13 +93,29 @@ impl Server {
                         true
                     }
                     Some(CopierThreadResult::SshUnknownHostKey) => {
+                        let machine = task.machine.clone().expect("Running task has no machine.");
+                        // I think the "unwrap" case should never happen.
+                        let class = task.class.clone().unwrap_or("<none>".into());
+
                         debug!(
                             "Copy results for task {} failed due to \
-                             unknown host SSH key fingerprint.",
-                            jid
+                             unknown host SSH key fingerprint. Automatically \
+                             moving machine {} to {} class. \
+                             Please add the machine to known_hosts and move \
+                             it back to class {}.",
+                            jid, machine, UNKNOWN_HOST_ERROR_CLASS, class
                         );
+
+                        // Move the machine to the UNKNOWN_HOST_ERROR_CLASS class. The job's state
+                        // transition will then move the free the machine to the appropriate class.
+                        if let Some(machine) = machines.get_mut(&machine) {
+                            machine.class = UNKNOWN_HOST_ERROR_CLASS.into();
+                        }
+
+                        // Change the task state.
                         task.update_state(TaskState::Error {
-                            error: "Copying results failed. Please add host to SSH known_hosts."
+                            error: "Copying results failed. Please add host to SSH known_hosts \
+                                and move it back to the appropriate class."
                                 .into(),
                             n: 0,
                         });
