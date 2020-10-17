@@ -65,6 +65,10 @@
       ```
 - Added the `job mvresults` subcommand to copy all file associated with a task
   to a new location.
+- Fixed issue where copying results hangs due to SSH host key verification
+  failure. This was a long-standing and annoying issue. Instead, we now detect
+  this case and print a specific error message encouraging the use to add the
+  given host to their `known_hosts` file.
 
 ## 0.8.1
 

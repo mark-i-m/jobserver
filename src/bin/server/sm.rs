@@ -14,7 +14,7 @@ use expjobserver::{cmd_replace_machine, cmd_replace_vars, cmd_to_path, human_ts}
 use log::{debug, error, info, warn};
 
 use super::{
-    copier::{copy, CopierThreadQueue, CopyJobInfo},
+    copier::{copy, CopierThreadQueue, CopierThreadResult, CopyJobInfo},
     JobProcessInfo, MachineStatus, Server, Task, TaskState, TaskType,
 };
 
@@ -29,7 +29,7 @@ impl Server {
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         to_remove: &mut HashSet<u64>,
         to_clone: &mut HashSet<u64>,
-        copying_flags: Arc<Mutex<HashMap<u64, bool>>>,
+        copying_flags: Arc<Mutex<HashMap<u64, CopierThreadResult>>>,
         copy_thread_queue: Arc<Mutex<CopierThreadQueue>>,
     ) -> bool {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
@@ -74,7 +74,7 @@ impl Server {
 
             TaskState::CopyingResults { ref results_path } => {
                 match copying_flags.lock().unwrap().remove(&jid) {
-                    Some(true) => {
+                    Some(CopierThreadResult::Success) => {
                         debug!("Copy results for task {} completed.", jid);
                         let results_path = results_path.clone();
                         task.update_state(TaskState::Finalize {
@@ -82,10 +82,23 @@ impl Server {
                         });
                         true
                     }
-                    Some(false) => {
+                    Some(CopierThreadResult::OtherFailure) => {
                         debug!("Copy results for task {} failed.", jid);
                         task.update_state(TaskState::Error {
                             error: "Task completed, but copying results failed.".into(),
+                            n: 0,
+                        });
+                        true
+                    }
+                    Some(CopierThreadResult::SshUnknownHostKey) => {
+                        debug!(
+                            "Copy results for task {} failed due to \
+                             unknown host SSH key fingerprint.",
+                            jid
+                        );
+                        task.update_state(TaskState::Error {
+                            error: "Copying results failed. Please add host to SSH known_hosts."
+                                .into(),
                             n: 0,
                         });
                         true
