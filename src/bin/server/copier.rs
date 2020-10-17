@@ -316,7 +316,7 @@ fn start_copy(
     let mut cmd = Command::new("rsync");
     let cmd = cmd
         .arg("-vvzP")
-        .args(&["-e", r#""ssh -o StrictHostKeyChecking=yes""#])
+        .args(&["-e", "ssh -o StrictHostKeyChecking=yes"])
         .arg(&format!("--timeout={}", RSYNC_IO_TIMEOUT))
         .arg(&format!("{}:{}*", machine_ip, from))
         .arg(&to)
