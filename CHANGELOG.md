@@ -68,7 +68,9 @@
 - Fixed issue where copying results hangs due to SSH host key verification
   failure. This was a long-standing and annoying issue. Instead, we now detect
   this case and print a specific error message encouraging the use to add the
-  given host to their `known_hosts` file.
+  given host to their `known_hosts` file. Additionally, we move the host out of
+  the class so that further experiments won't error out wastefully. The user
+  can move it back when the host has been added to `known_hosts`.
 
 ## 0.8.1
 
