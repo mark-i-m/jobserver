@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Add the `--stagger` flag for machine setup. This helps avoid resource
+  bottlenecks during setup tasks for many machines.
+
 ## 0.9.0
 
 - Renamed `job matrix stat` to `job matrix ls` for better consistency with `job ls`.

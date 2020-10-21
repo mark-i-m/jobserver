@@ -321,6 +321,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .value_of("TIMEOUT")
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(0);
+            let stagger = sub_m.value_of("STAGGER").map(|s| s.parse().unwrap());
 
             for machine in machines.into_iter() {
                 let req = Sumreq(protocol::SetUpMachineRequest {
@@ -332,6 +333,10 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
                 let response = make_request(addr, req);
                 pretty::print_response(response);
+
+                if let Some(stagger) = stagger {
+                    std::thread::sleep(std::time::Duration::from_secs(stagger));
+                }
             }
         }
 

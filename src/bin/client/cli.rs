@@ -405,9 +405,21 @@ fn build_machine_subcommand() -> clap::App<'static, 'static> {
                     Arg::with_name("TIMEOUT")
                         .long("timeout")
                         .takes_value(true)
+                        .validator(is_usize)
                         .help(
                             "If passed, time out the setup task after TIMEOUT minutes \
                              total for all commands.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("STAGGER")
+                        .long("stagger")
+                        .takes_value(true)
+                        .validator(is_usize)
+                        .help(
+                            "If passed, stagger the submission of jobs by the given number of \
+                            seconds. This can be useful if all setup tasks need to fetch a resource \
+                            from the internet to avoid DOS-ing that resource.",
                         ),
                 ),
         )
