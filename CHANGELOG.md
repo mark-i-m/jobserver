@@ -4,6 +4,7 @@
 
 - Add the `--stagger` flag for machine setup. This helps avoid resource
   bottlenecks during setup tasks for many machines.
+- Add some more columns to `job stat` for convenience.
 
 ## 0.9.0
 

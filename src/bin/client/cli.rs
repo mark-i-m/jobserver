@@ -143,9 +143,13 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                     (@arg PSTATUS: --status "Output the job's status.")
                     (@arg PERROR: --error "Output the job's error.")
                     (@arg PVARS: --vars "Output the job's variables.")
-                    (@arg PRESULTS: --results "Output the job's results path.")
+                    (@arg PRESULTS: --results "Output the job's results path on the remote.")
+                    (@arg PRESULTS_PATH: --results_path +takes_value
+                     "Output the finalized location of results on the driver with the given suffix.")
                     (@arg PSTART: --starttime "Output the job's start time.")
                     (@arg PEND: --endtime "Output the job's end time.")
+                    (@arg PDURATION: --duration
+                     "Output the duration in seconds (PEND - PSTART)")
                     (@arg PLOG: --log "Output the path to job's log.")
                     (@arg PCPRES: --results_dir "Output the path at which results will be saved.")
                 )
@@ -159,8 +163,10 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 (@arg PERRORMAP: --error_map +takes_value requires[PERROR])
                 (@arg PVARSMAP: --vars_map +takes_value requires[PVARs])
                 (@arg PRESULTSMAP: --results_map +takes_value requires[PRESULTS])
+                (@arg PRESULTSPATHMAP: --results_path_map +takes_value requires[PRESULTS_PATH])
                 (@arg PSTARTMAP: --starttime_map +takes_value requires[PSTART])
                 (@arg PENDMAP: --endtime_map +takes_value requires[PEND])
+                (@arg PDURATIONMAP: --duration_map +takes_value requires[PDURATION])
                 (@arg PLOGMAP: --log_map +takes_value requires[PLOG])
                 (@arg PCPRESMAP: --results_dir_map +takes_value requires[PCPRES])
 

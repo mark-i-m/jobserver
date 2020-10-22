@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{stdout, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use expjobserver::serialize_ts;
@@ -27,6 +28,8 @@ struct TextJobInfo {
     end: String,
     log: String,
     cp_results: String,
+    results_path: String,
+    duration: String,
 }
 
 impl Status {
@@ -76,6 +79,22 @@ impl From<JobInfo> for TextJobInfo {
 
         let variables = serde_json::to_string(&ji.variables).unwrap_or_else(|_| String::new());
 
+        let results_path = if results.is_empty() {
+            "".into()
+        } else {
+            let cp_results = PathBuf::from(&ji.cp_results);
+            let fname = PathBuf::from(&results);
+            let path = cp_results.join(fname.file_name().expect("No filename."));
+            path.to_str().expect("Not a string").to_owned()
+        };
+
+        let duration = if let Some(done_timestamp) = ji.done_timestamp {
+            (done_timestamp - ji.timestamp).num_seconds()
+        } else {
+            0
+        }
+        .to_string();
+
         TextJobInfo {
             class: ji.class,
             machine,
@@ -96,6 +115,8 @@ impl From<JobInfo> for TextJobInfo {
                 .unwrap_or_else(String::new),
             log: ji.log,
             cp_results: ji.cp_results,
+            results_path,
+            duration,
         }
     }
 }
@@ -207,6 +228,8 @@ fn map_jobs(sub_m: &clap::ArgMatches<'_>, jobs: Vec<JobInfo>) -> Vec<BTreeMap<St
             field_mapper!(job, "PENDMAP", end, sub_m);
             field_mapper!(job, "PLOGMAP", log, sub_m);
             field_mapper!(job, "PCPRESMAP", cp_results, sub_m);
+            field_mapper!(job, "PRESULTS_PATH", results_path, sub_m);
+            field_mapper!(job, "PDURATION", duration, sub_m);
 
             // Pass the whole job to the mapper command.
             let job_json = serde_json::to_string(&job).expect("Unable to serialize to json.");
@@ -248,6 +271,8 @@ fn map_jobs(sub_m: &clap::ArgMatches<'_>, jobs: Vec<JobInfo>) -> Vec<BTreeMap<St
             drop_unselected!(job, "PEND", end, sub_m);
             drop_unselected!(job, "PLOG", log, sub_m);
             drop_unselected!(job, "PCPRES", cp_results, sub_m);
+            drop_unselected!(job, "PRESULTS_PATH", results_path, sub_m);
+            drop_unselected!(job, "PDURATION", duration, sub_m);
 
             job
         })
