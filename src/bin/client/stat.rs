@@ -180,6 +180,10 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
 
 macro_rules! field_mapper {
     ($job:ident, $argname:literal, $field:ident, $subm:ident) => {{
+        field_mapper!($job, $argname, $field, { $job.$field.as_bytes() }, $subm);
+    }};
+
+    ($job:ident, $argname:literal, $field:ident, $pass:expr, $subm:ident) => {{
         if let Some(mapper) = $subm.value_of($argname) {
             let mut child = Command::new(mapper)
                 .stdin(Stdio::piped())
@@ -190,7 +194,7 @@ macro_rules! field_mapper {
             {
                 let child_stdin = child.stdin.as_mut().unwrap();
                 child_stdin
-                    .write_all($job.$field.as_bytes())
+                    .write_all($pass)
                     .expect("Unable to write to stdin for mapper.");
             }
 
@@ -213,6 +217,10 @@ fn map_jobs(sub_m: &clap::ArgMatches<'_>, jobs: Vec<JobInfo>) -> Vec<BTreeMap<St
     jobs.into_iter()
         .map(|job| {
             let mut job = TextJobInfo::from(job);
+
+            if let Some(suffix) = sub_m.value_of("PRESULTS_PATH") {
+                job.results_path.push_str(suffix);
+            }
 
             // Pass the relevant fields to the field mapper commands.
             field_mapper!(job, "PJIDMAP", jid, sub_m);
