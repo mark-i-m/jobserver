@@ -228,7 +228,7 @@ fn map_jobs(sub_m: &clap::ArgMatches<'_>, jobs: Vec<JobInfo>) -> Vec<BTreeMap<St
             field_mapper!(job, "PENDMAP", end, sub_m);
             field_mapper!(job, "PLOGMAP", log, sub_m);
             field_mapper!(job, "PCPRESMAP", cp_results, sub_m);
-            field_mapper!(job, "PRESULTS_PATH", results_path, sub_m);
+            field_mapper!(job, "PRESULTSPATHMAP", results_path, sub_m);
             field_mapper!(job, "PDURATION", duration, sub_m);
 
             // Pass the whole job to the mapper command.
