@@ -74,8 +74,11 @@ enum TaskState {
     /// This task has not yet started running and is on hold.
     Held,
 
-    /// This task is running the `n`th command in the `cmds` vector.
-    Running(usize),
+    /// Thist task is currently running.
+    Running {
+        /// The index of the command in the `cmds` vector.
+        index: usize,
+    },
 
     /// The task terminated with a successful error code, but we have not yet checked for results.
     CheckingResults,
@@ -150,6 +153,16 @@ struct Task {
 
     /// If true, then automatically clone the job if it fails.
     repeat_on_fail: bool,
+
+    /// We are running the `attempt`-th attempt of the task.
+    ///
+    /// NOTE: if the task has multiple commands, then restarting will currently go back to the
+    /// beginning again, which isn't really what we want ideally. Currently, normal tasks can only
+    /// have a single command, so this works out.
+    attempt: usize,
+
+    /// The maximum number of failures if `repeat_on_fail` is on.
+    maximum_failures: Option<usize>,
 
     /// The time when this job was enqueued if it has not run yet, or the time when it was started
     /// if it is running or has run.

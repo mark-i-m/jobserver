@@ -55,14 +55,14 @@ impl Server {
                 running_job_handles,
             ),
 
-            TaskState::Running(idx) => Self::try_drive_sm_running(
+            TaskState::Running { index } => Self::try_drive_sm_running(
                 runner,
                 log_dir,
                 jid,
                 task,
                 machines,
                 running_job_handles,
-                idx,
+                index,
             ),
 
             TaskState::CheckingResults => Self::try_drive_sm_checking_results(
@@ -202,7 +202,7 @@ impl Server {
             }
 
             // Mark the task as running.
-            task.update_state(TaskState::Running(0));
+            task.update_state(TaskState::Running { index: 0 });
             task.machine = Some(machine.clone());
             task.timestamp = Utc::now();
 
@@ -265,7 +265,7 @@ impl Server {
                         task.update_state(TaskState::CheckingResults);
                     } else {
                         // Move to the next task and then attempt to run it.
-                        task.update_state(TaskState::Running(idx + 1));
+                        task.update_state(TaskState::Running { index: idx + 1 });
 
                         // Actually start the command now.
                         match Self::run_cmd(jid, task, &machine, runner, log_dir) {
@@ -528,7 +528,7 @@ impl Server {
         log_dir: &str,
     ) -> std::io::Result<JobProcessInfo> {
         let cmd_idx = match task.state {
-            TaskState::Running(idx) => idx,
+            TaskState::Running { index } => index,
             _ => unreachable!(),
         };
         let cmd = &task.cmds[cmd_idx];

@@ -97,8 +97,10 @@ mod serialize {
                 TaskState::Held => SnapshotTaskState {
                     state: Some(snapshot_task_state::State::Held(Held {})),
                 },
-                TaskState::Running(n) => SnapshotTaskState {
-                    state: Some(snapshot_task_state::State::Running(Running { n: n as u64 })),
+                TaskState::Running { index } => SnapshotTaskState {
+                    state: Some(snapshot_task_state::State::Running(Running {
+                        n: index as u64,
+                    })),
                 },
                 TaskState::CheckingResults => SnapshotTaskState {
                     state: Some(snapshot_task_state::State::CheckingResults(

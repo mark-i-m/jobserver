@@ -39,7 +39,7 @@ impl Task {
                 status.status = protocol::status::Status::Held.into();
             }
 
-            TaskState::Running(..)
+            TaskState::Running { .. }
             | TaskState::CheckingResults { .. }
             | TaskState::Finalize { .. } => {
                 status.status = protocol::status::Status::Running.into();
@@ -68,7 +68,7 @@ impl Task {
 
         // Set the machine
         match &self.state {
-            TaskState::Running(..)
+            TaskState::Running { .. }
             | TaskState::CheckingResults { .. }
             | TaskState::Finalize { .. }
             | TaskState::CopyingResults { .. }
@@ -550,7 +550,7 @@ impl Server {
 
                             let cmd = match state {
                                 TaskState::Waiting | TaskState::Held => &cmds[0],
-                                TaskState::Running(idx) => &cmds[*idx],
+                                TaskState::Running { index } => &cmds[*index],
                                 TaskState::Error { n, .. } | TaskState::ErrorDone { n, .. } => {
                                     &cmds[*n]
                                 }
