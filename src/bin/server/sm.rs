@@ -148,11 +148,19 @@ impl Server {
                 // Clean up job handles
                 let _ = running_job_handles.remove(&jid).is_some();
 
-                // If this task is marked `repeat_on_fail`, then we will need to clone the task,
-                // but we can't do so here because it creates a lot of borrow checker errors (due
-                // to lots of things already being borrowed).
+                // If this task is marked `repeat_on_fail` (and there are retries remaining), then
+                // we will need to clone the task, but we can't do so here because it creates a lot
+                // of borrow checker errors (due to lots of things already being borrowed).
                 if task.repeat_on_fail {
-                    to_clone.insert(jid);
+                    match task.maximum_failures {
+                        Some(maximum_failures) if task.attempt >= maximum_failures => {
+                            // Exceeded retry limit! Do not clone.
+                        }
+                        _ => {
+                            // No retry limit or not exceeded.
+                            to_clone.insert(jid);
+                        }
+                    }
                 }
 
                 // Move to the done state.

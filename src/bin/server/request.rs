@@ -300,6 +300,8 @@ impl Server {
                             cp_results: None,
                             canceled: None,
                             repeat_on_fail: false,
+                            maximum_failures: None,
+                            attempt: 0,
                             timestamp: Utc::now(),
                             done_timestamp: None,
                             timeout: if timeout > 0 {
@@ -364,6 +366,8 @@ impl Server {
                             machine: None,
                             canceled: None,
                             repeat_on_fail,
+                            maximum_failures: None,
+                            attempt: 0,
                             timestamp: Utc::now(),
                             done_timestamp: None,
                             timeout: if timeout > 0 {
@@ -727,6 +731,8 @@ impl Server {
                                     machine: None,
                                     canceled: None,
                                     repeat_on_fail: true,
+                                    maximum_failures: None,
+                                    attempt: 0,
                                     timestamp: Utc::now(),
                                     done_timestamp: None,
                                     timedout: None,

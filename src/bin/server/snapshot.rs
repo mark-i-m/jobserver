@@ -72,6 +72,8 @@ mod serialize {
                     }
                 },
                 repeat_on_fail: self.repeat_on_fail,
+                maximum_failures: self.maximum_failures.map(|x| x as usize),
+                attempt: self.attempt as usize,
                 timestamp: deserialize_ts(self.timestamp),
                 done_timestamp: self.done_timestamp.map(deserialize_ts),
                 timeout: self
@@ -158,6 +160,8 @@ mod serialize {
                 canceled: task.canceled,
                 state,
                 repeat_on_fail: task.repeat_on_fail,
+                maximum_failures: task.maximum_failures.map(|x| x as u64),
+                attempt: task.attempt as u64,
                 timestamp: serialize_ts(task.timestamp),
                 done_timestamp: task.done_timestamp.map(serialize_ts),
                 timeout: task.timeout.map(|timeout| timeout.num_minutes() as u64),

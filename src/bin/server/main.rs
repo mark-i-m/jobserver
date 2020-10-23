@@ -154,7 +154,7 @@ struct Task {
     /// If true, then automatically clone the job if it fails.
     repeat_on_fail: bool,
 
-    /// We are running the `attempt`-th attempt of the task.
+    /// We are running the `attempt`-th attempt of the task (starts counting at 0).
     ///
     /// NOTE: if the task has multiple commands, then restarting will currently go back to the
     /// beginning again, which isn't really what we want ideally. Currently, normal tasks can only
@@ -368,8 +368,10 @@ impl Server {
                     let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
                     // unwrap ok, already checked in `try_drive_sm`
                     let old_task = locked_tasks.get(&jid).unwrap();
-                    let task = Self::clone_task(new_jid, old_task);
+                    let mut task = Self::clone_task(new_jid, old_task);
                     let maybe_matrix = task.matrix.clone();
+
+                    task.attempt = old_task.attempt + 1;
 
                     locked_tasks.insert(new_jid, task);
 
@@ -394,6 +396,9 @@ impl Server {
 
     /// Clone the given task with the given jid. Return the new `Task`. It is the responsibility of
     /// the caller to actually add the new `Task` to the list of running tasks.
+    ///
+    /// Also note that the task is treated as if it is a freshly submitted task. For example, the
+    /// `attempt` field is reset to 0 in the new task. Callers should modify as needed.
     fn clone_task(new_jid: u64, task: &Task) -> Task {
         match task {
             Task {
@@ -409,9 +414,11 @@ impl Server {
                 machine: _,
                 canceled: _,
                 repeat_on_fail,
+                maximum_failures,
                 timestamp: _,
                 done_timestamp: _,
                 timedout: _,
+                attempt: _,
             } => {
                 info!("Cloning job {} to job {}, {:?}", jid, new_jid, task);
 
@@ -432,6 +439,8 @@ impl Server {
                     machine: None,
                     canceled: None,
                     repeat_on_fail: *repeat_on_fail,
+                    maximum_failures: *maximum_failures,
+                    attempt: 0,
                     timestamp: Utc::now(),
                     done_timestamp: None,
                     timeout: *timeout,
@@ -452,6 +461,8 @@ impl Server {
                 state: _,
                 cp_results: None,
                 repeat_on_fail: false,
+                attempt: _,
+                maximum_failures: None,
                 timestamp: _,
                 done_timestamp: _,
                 timedout: _,
@@ -478,6 +489,8 @@ impl Server {
                     variables,
                     canceled: None,
                     repeat_on_fail: false,
+                    maximum_failures: None,
+                    attempt: 0,
                     timestamp: Utc::now(),
                     done_timestamp: None,
                     timeout: *timeout,
