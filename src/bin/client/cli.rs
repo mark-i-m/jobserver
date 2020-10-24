@@ -81,6 +81,8 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                  "(optional) the timeout for this job in minutes. If the job doesn't \
                   complete within TIMEOUT minutes of entering the \"running\" state, \
                   the job killed.")
+                (@arg MAX_FAILURES: --max_failures +takes_value
+                 "(optional) the number of failures before the server stop retrying.")
             )
 
             (@subcommand ls =>
@@ -247,6 +249,8 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                      "(optional) the timeout for this job in minutes. If the job doesn't \
                       complete within TIMEOUT minutes of entering the \"running\" state, \
                       the job killed.")
+                    (@arg MAX_FAILURES: --max_failures +takes_value
+                     "(optional) the number of failures before the server stop retrying.")
                 )
 
                 (@subcommand ls =>

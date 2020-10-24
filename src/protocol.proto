@@ -114,6 +114,10 @@ message AddJobRequest {
     // The number of minutes of the timeout, or 0 if no timeout (let the job
     // run however long it does).
     uint64 timeout = 5;
+
+    // The number of failures allowed before retries stop.
+    // Infinite retries are allowed if negative.
+    int64 maximum_failures = 6;
 }
 
 // Get a list of job IDs.
@@ -177,6 +181,10 @@ message AddMatrixRequest {
 
     // The number of minutes for a timeout, or 0 if none.
     uint64 timeout = 6;
+
+    // The number of failures allowed before retries stop.
+    // Infinite retries are allowed if negative.
+    int64 maximum_failures = 7;
 }
 
 message StatMatrixRequest {
