@@ -5,6 +5,8 @@
 - Add the `--stagger` flag for machine setup. This helps avoid resource
   bottlenecks during setup tasks for many machines.
 - Add some more columns to `job stat` for convenience.
+- Add `--only_done` flag to `job stat`to only include jobs that are done.
+- Add retry limits to `job add` and `job matrix add`
 
 ## 0.9.0
 
