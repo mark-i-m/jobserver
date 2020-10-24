@@ -484,6 +484,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .value_of("TIMEOUT")
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(0);
+            let maximum_failures = sub_m
+                .value_of("MAX_FAILURES")
+                .map(|s| s.parse().unwrap())
+                .unwrap_or(-1);
 
             for _ in 0..nclones {
                 let req = Ajreq(protocol::AddJobRequest {
@@ -494,6 +498,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                         .map(|s| protocol::add_job_request::CpResultsopt::CpResults(s.into())),
                     repeat_on_fail: retry,
                     timeout,
+                    maximum_failures,
                 });
 
                 let response = make_request(addr, req);
@@ -664,6 +669,10 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     .value_of("TIMEOUT")
                     .map(|s| s.parse().unwrap())
                     .unwrap_or(0),
+                maximum_failures: sub_m
+                    .value_of("MAX_FAILURES")
+                    .map(|s| s.parse().unwrap())
+                    .unwrap_or(-1),
             });
 
             let response = make_request(addr, req);

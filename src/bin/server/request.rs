@@ -343,6 +343,7 @@ impl Server {
                     // prost uses a default of `false`.
                     repeat_on_fail,
                     timeout,
+                    maximum_failures,
                 }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -366,7 +367,11 @@ impl Server {
                             machine: None,
                             canceled: None,
                             repeat_on_fail,
-                            maximum_failures: None,
+                            maximum_failures: if maximum_failures >= 0 {
+                                Some(maximum_failures as usize)
+                            } else {
+                                None
+                            },
                             attempt: 0,
                             timestamp: Utc::now(),
                             done_timestamp: None,
@@ -673,6 +678,7 @@ impl Server {
                     cp_resultsopt,
                     repeat,
                     timeout,
+                    maximum_failures,
                 }) => {
                     let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -731,7 +737,11 @@ impl Server {
                                     machine: None,
                                     canceled: None,
                                     repeat_on_fail: true,
-                                    maximum_failures: None,
+                                    maximum_failures: if maximum_failures >= 0 {
+                                        Some(maximum_failures as usize)
+                                    } else {
+                                        None
+                                    },
                                     attempt: 0,
                                     timestamp: Utc::now(),
                                     done_timestamp: None,
