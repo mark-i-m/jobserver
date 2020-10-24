@@ -81,8 +81,8 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                  "(optional) the timeout for this job in minutes. If the job doesn't \
                   complete within TIMEOUT minutes of entering the \"running\" state, \
                   the job killed.")
-                (@arg MAX_FAILURES: --max_failures +takes_value
-                 "(optional) the number of failures before the server stop retrying.")
+                (@arg MAX_FAILURES: --max_failures +takes_value requires[RETRY]
+                 "(optional) the number of failures before the server stops retrying.")
             )
 
             (@subcommand ls =>
@@ -177,7 +177,8 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 (@arg SKIPHEAD: --no_headers requires[TEXT]
                  "Don't print column headers in text mode.")
 
-                (@arg ONLY_DONE: --only_done "Only included jobs that are done.")
+                (@arg ONLY_DONE: --only_done
+                 "Only included jobs that are completed successfully and have results.")
             )
 
             (@subcommand hold =>
@@ -250,7 +251,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                       complete within TIMEOUT minutes of entering the \"running\" state, \
                       the job killed.")
                     (@arg MAX_FAILURES: --max_failures +takes_value
-                     "(optional) the number of failures before the server stop retrying.")
+                     "(optional) the number of failures before the server stops retrying.")
                 )
 
                 (@subcommand ls =>
