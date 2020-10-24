@@ -28,6 +28,7 @@ impl Server {
         jid: u64,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
+        live_tasks: &mut HashSet<u64>,
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         to_remove: &mut HashSet<u64>,
         to_clone: &mut HashSet<u64>,
@@ -136,6 +137,9 @@ impl Server {
             | TaskState::Unknown { .. }
             | TaskState::ErrorDone { .. } => {
                 let old = running_job_handles.remove(&jid);
+
+                // Remove from live_tasks if it is there.
+                live_tasks.remove(&jid);
 
                 // Update occured if we actually removed something.
                 old.is_some()

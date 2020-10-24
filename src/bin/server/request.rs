@@ -137,12 +137,15 @@ impl Task {
 impl Server {
     /// Mark the given job as canceled. This doesn't actually do anything yet. The job will be
     /// killed and removed asynchronously.
+    ///
+    /// NOTE: this grabs the locks for tasks and live_tasks.
     fn cancel_job(&self, jid: u64, remove: bool) -> ResponseType {
         // We set the `canceled` flag and let the job server handle the rest.
 
         if let Some(job) = self.tasks.lock().unwrap().get_mut(&jid) {
             info!("Cancelling task {}, {:?}", jid, job);
             job.canceled = Some(remove);
+            self.live_tasks.lock().unwrap().insert(jid);
             Okresp(protocol::OkResp {})
         } else {
             error!("No such job: {}", jid);
@@ -312,6 +315,7 @@ impl Server {
                             timedout: None,
                         },
                     );
+                    self.live_tasks.lock().unwrap().insert(jid);
 
                     Jiresp(protocol::JobIdResp { jid })
                 }
@@ -383,6 +387,7 @@ impl Server {
                             timedout: None,
                         },
                     );
+                    self.live_tasks.lock().unwrap().insert(jid);
 
                     Jiresp(protocol::JobIdResp { jid })
                 }
@@ -642,6 +647,7 @@ impl Server {
                             let maybe_matrix = task.matrix.clone();
 
                             locked_jobs.insert(new_jid, task);
+                            self.live_tasks.lock().unwrap().insert(new_jid);
 
                             if let Some(matrix) = maybe_matrix {
                                 self.matrices
@@ -748,6 +754,7 @@ impl Server {
                                     timedout: None,
                                 },
                             );
+                            self.live_tasks.lock().unwrap().insert(jid);
                         }
                     }
 

@@ -335,6 +335,9 @@ impl Server {
             })
             .collect();
         *self.variables.lock().unwrap() = variables;
+        // We initially add all tasks to the live set. The ones that are not live will be removed
+        // when we try to drive their state machines.
+        *self.live_tasks.lock().unwrap() = tasks.iter().map(|(jid, _)| *jid).collect();
         *self.tasks.lock().unwrap() = tasks
             .into_iter()
             .map(|(jid, task)| (jid, task.to_task(&mut was_running)))

@@ -32,6 +32,7 @@ struct Server {
     // Lock ordering:
     // - machines
     // - tasks
+    // - live_tasks
     // - matrices
     /// Maps available machines to their classes.
     machines: Arc<Mutex<HashMap<String, MachineStatus>>>,
@@ -41,6 +42,20 @@ struct Server {
 
     /// Information about queued tasks, by job ID.
     tasks: Arc<Mutex<BTreeMap<u64, Task>>>,
+
+    /// This is a list of job IDs that haven't reached terminal states. This HashSet is an
+    /// optimizations to avoid having to iterate through all of the jobs, since that can take a
+    /// while when there are many tasks. All of the info in this set can be recreated from the
+    /// `tasks` field.
+    ///
+    /// Notably, if a task needs to be updated, it should be added to this set. That is an
+    /// important invariant. Otherwise, the task will seem to stall because we will never attempt
+    /// to drive its state machine.
+    ///
+    /// It is also completely ok for jobs listed here to be already in a terminal state -- that is,
+    /// the list is a superset of jobs that need to be driven. It is also possible for the list to
+    /// contain jobs that no longer exist, so users need to check accordingly
+    live_tasks: Arc<Mutex<HashSet<u64>>>,
 
     /// Information about matrices, by ID.
     matrices: Arc<Mutex<HashMap<u64, Matrix>>>,
@@ -244,6 +259,7 @@ impl Server {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(BTreeMap::new())),
+            live_tasks: Arc::new(Mutex::new(HashSet::new())),
             matrices: Arc::new(Mutex::new(HashMap::new())),
             next_jid: AtomicU64::new(0),
             runner,
@@ -322,24 +338,31 @@ impl Server {
             {
                 let mut locked_machines = self.machines.lock().unwrap();
                 let mut locked_tasks = self.tasks.lock().unwrap();
+                let mut locked_live_tasks = self.live_tasks.lock().unwrap();
+                let live_tasks_snapshot = locked_live_tasks.clone();
                 let mut locked_matrices = self.matrices.lock().unwrap();
 
                 debug!("Machine stata: {:?}", *locked_machines);
 
-                for (jid, task) in locked_tasks.iter_mut() {
-                    updated = updated
-                        || Self::try_drive_sm(
-                            &self.runner,
-                            &self.log_dir,
-                            *jid,
-                            task,
-                            &mut *locked_machines,
-                            &mut running_job_handles,
-                            &mut to_remove,
-                            &mut to_clone,
-                            copying_flags.clone(),
-                            copy_thread_queue.clone(),
-                        );
+                for jid in live_tasks_snapshot.into_iter() {
+                    if let Some(task) = locked_tasks.get_mut(&jid) {
+                        updated = updated
+                            || Self::try_drive_sm(
+                                &self.runner,
+                                &self.log_dir,
+                                jid,
+                                task,
+                                &mut *locked_machines,
+                                &mut *locked_live_tasks,
+                                &mut running_job_handles,
+                                &mut to_remove,
+                                &mut to_clone,
+                                copying_flags.clone(),
+                                copy_thread_queue.clone(),
+                            );
+                    } else {
+                        locked_live_tasks.remove(&jid);
+                    }
                 }
 
                 debug!(
@@ -358,6 +381,7 @@ impl Server {
                     {
                         let _ = locked_matrices.get_mut(&m).unwrap().jids.remove(&jid);
                     }
+                    locked_live_tasks.remove(&jid);
                 }
 
                 // Remove any empty matrices.
@@ -374,6 +398,7 @@ impl Server {
                     task.attempt = old_task.attempt + 1;
 
                     locked_tasks.insert(new_jid, task);
+                    locked_live_tasks.insert(new_jid);
 
                     if let Some(matrix) = maybe_matrix {
                         locked_matrices
