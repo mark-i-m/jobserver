@@ -171,6 +171,16 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
         })
         .collect();
 
+    // Decide if we need to remove jobs that aren't done
+    if sub_m.is_present("ONLY_DONE") {
+        jobs.retain(|j| {
+            match &j.status {
+                Status::Done {machine: _, output: _} => true,
+                _ => false,
+            }
+        });
+    }
+
     // Sort and deduplicate.
     jobs.sort_by_key(|j| j.jid);
     jobs.dedup_by_key(|j| j.jid);

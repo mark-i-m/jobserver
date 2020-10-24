@@ -174,6 +174,8 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
 
                 (@arg SKIPHEAD: --no_headers requires[TEXT]
                  "Don't print column headers in text mode.")
+
+                (@arg ONLY_DONE: --only_done "Only included jobs that are done.")
             )
 
             (@subcommand hold =>
