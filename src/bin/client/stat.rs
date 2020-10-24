@@ -175,7 +175,7 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
     if sub_m.is_present("ONLY_DONE") {
         jobs.retain(|j| {
             match &j.status {
-                Status::Done {machine: _, output: _} => true,
+                Status::Done {machine: _, output: Some(_)} => true,
                 _ => false,
             }
         });
