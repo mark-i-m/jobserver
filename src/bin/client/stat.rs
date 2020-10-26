@@ -7,6 +7,8 @@ use std::process::{Command, Stdio};
 
 use expjobserver::serialize_ts;
 
+use rayon::prelude::*;
+
 use serde::{Deserialize, Serialize};
 
 use super::{list_jobs, Jid, JobInfo, JobListMode, JobOrMatrixInfo, Status};
@@ -173,11 +175,12 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
 
     // Decide if we need to remove jobs that aren't done
     if sub_m.is_present("ONLY_DONE") {
-        jobs.retain(|j| {
-            match &j.status {
-                Status::Done {machine: _, output: Some(_)} => true,
-                _ => false,
-            }
+        jobs.retain(|j| match &j.status {
+            Status::Done {
+                machine: _,
+                output: Some(_),
+            } => true,
+            _ => false,
         });
     }
 
@@ -224,7 +227,7 @@ macro_rules! drop_unselected {
 }
 
 fn map_jobs(sub_m: &clap::ArgMatches<'_>, jobs: Vec<JobInfo>) -> Vec<BTreeMap<String, String>> {
-    jobs.into_iter()
+    jobs.into_par_iter()
         .map(|job| {
             let mut job = TextJobInfo::from(job);
 
