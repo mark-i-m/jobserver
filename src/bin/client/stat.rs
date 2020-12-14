@@ -11,7 +11,7 @@ use rayon::prelude::*;
 
 use serde::{Deserialize, Serialize};
 
-use super::{list_jobs, Jid, JobInfo, JobListMode, JobOrMatrixInfo, Status};
+use super::{list_jobs, JobInfo, JobListMode, JobOrMatrixInfo, Status};
 
 /// `JobInfo` but in a purely textual form that can be passed to other processes or formatted for
 /// printing to stdout. Missing fields (`None`) are represented as empty strings.
@@ -145,11 +145,12 @@ pub(crate) fn handle_stat_cmd(addr: &str, sub_m: &clap::ArgMatches<'_>) {
 
 fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
     // Get a combined list of all jobs.
-    let after_jids = if let Some(after) = sub_m.value_of("AFTER").map(Jid::from) {
-        list_jobs(addr, JobListMode::After(after))
-    } else {
-        Vec::new()
-    };
+    let after_jids =
+        if let Some(after) = sub_m.value_of("AFTER").map(|s| super::str_to_jid(addr, s)) {
+            list_jobs(addr, JobListMode::After(after))
+        } else {
+            Vec::new()
+        };
     let mut running_jids = if sub_m.is_present("RUNNING") {
         list_jobs(addr, JobListMode::Running)
     } else {
@@ -157,7 +158,12 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
     };
     let mut listed_jids = sub_m
         .values_of("ID")
-        .map(|v| list_jobs(addr, JobListMode::Jids(v.map(Jid::from).collect())))
+        .map(|v| {
+            list_jobs(
+                addr,
+                JobListMode::Jids(v.map(|s| super::str_to_jid(addr, s)).collect()),
+            )
+        })
         .unwrap_or_else(|| Vec::new());
 
     let mut jids = after_jids;

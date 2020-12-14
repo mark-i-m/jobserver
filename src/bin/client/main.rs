@@ -37,12 +37,6 @@ impl Jid {
     }
 }
 
-impl<S: AsRef<str>> From<S> for Jid {
-    fn from(jid: S) -> Self {
-        Jid(jid.as_ref().parse().expect("Unable to parse as usize"))
-    }
-}
-
 impl From<Jid> for u64 {
     fn from(jid: Jid) -> Self {
         jid.0
@@ -167,6 +161,20 @@ impl From<protocol::Status> for Status {
                 }
             }
         }
+    }
+}
+
+fn str_to_jid(addr: &str, jid_str: &str) -> Jid {
+    let parsed = cli::parse_jid(jid_str).expect("Unable to parse jid.");
+    match parsed {
+        cli::JidArg::Id(id) => Jid::new(id),
+        cli::JidArg::Last => list_jobs(addr, JobListMode::Last)
+            .pop()
+            .map(|jomi| match jomi {
+                JobOrMatrixInfo::Job(j) => j.jid,
+                JobOrMatrixInfo::Matrix(_) => unreachable!(),
+            })
+            .expect("Unable to get last job."),
     }
 }
 
@@ -378,9 +386,9 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .values_of("JID")
                 .map(|v| {
                     if is_after {
-                        JobListMode::After(v.map(Jid::from).max().unwrap())
+                        JobListMode::After(v.map(|s| str_to_jid(addr, s)).max().unwrap())
                     } else {
-                        JobListMode::Jids(v.map(Jid::from).collect())
+                        JobListMode::Jids(v.map(|s| str_to_jid(addr, s)).collect())
                     }
                 })
                 .unwrap_or_else(|| {
@@ -399,7 +407,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         ("hold", Some(sub_m)) => {
             for jid in sub_m.values_of("JID").unwrap() {
                 let req = Hjreq(protocol::HoldJobRequest {
-                    jid: Jid::from(jid).into(),
+                    jid: str_to_jid(addr, jid).into(),
                 });
 
                 let response = make_request(addr, req);
@@ -410,7 +418,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         ("unhold", Some(sub_m)) => {
             for jid in sub_m.values_of("JID").unwrap() {
                 let req = Ujreq(protocol::UnholdJobRequest {
-                    jid: Jid::from(jid).into(),
+                    jid: str_to_jid(addr, jid).into(),
                 });
 
                 let response = make_request(addr, req);
@@ -421,7 +429,11 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
         ("log", Some(sub_m)) => {
             let is_err = sub_m.is_present("ERR");
             let jids: Vec<_> = if sub_m.is_present("JID") {
-                sub_m.values_of("JID").unwrap().map(Jid::from).collect()
+                sub_m
+                    .values_of("JID")
+                    .unwrap()
+                    .map(|s| str_to_jid(addr, s))
+                    .collect()
             } else {
                 list_jobs(addr, JobListMode::Running)
                     .into_iter()
@@ -512,7 +524,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 let response = make_request(
                     addr,
                     Cjreq(protocol::CancelJobRequest {
-                        jid: Jid::from(jid).into(),
+                        jid: str_to_jid(addr, jid).into(),
                         remove: forget,
                     }),
                 );
@@ -530,7 +542,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     let response = make_request(
                         addr,
                         Cljreq(protocol::CloneJobRequest {
-                            jid: Jid::from(jid).into(),
+                            jid: str_to_jid(addr, jid).into(),
                         }),
                     );
                     pretty::print_response(response);
@@ -543,7 +555,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 let response = make_request(
                     addr,
                     Cjreq(protocol::CancelJobRequest {
-                        jid: Jid::from(jid).into(),
+                        jid: str_to_jid(addr, jid).into(),
                         remove: false,
                     }),
                 );
@@ -552,7 +564,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 let response = make_request(
                     addr,
                     Cljreq(protocol::CloneJobRequest {
-                        jid: Jid::from(jid).into(),
+                        jid: str_to_jid(addr, jid).into(),
                     }),
                 );
                 pretty::print_response(response);
@@ -563,7 +575,11 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("cpresults", Some(sub_m)) => {
             let to_path = sub_m.value_of("TO").unwrap();
-            let jobs = sub_m.values_of("JID").unwrap().map(Jid::from).collect();
+            let jobs = sub_m
+                .values_of("JID")
+                .unwrap()
+                .map(|s| str_to_jid(addr, s))
+                .collect();
             let jobs = list_jobs(addr, JobListMode::Jids(jobs));
 
             println!("Copying results to {}", to_path);
@@ -784,6 +800,10 @@ enum JobListMode {
     /// List a suffix of jobs (the `usize` is the length of the suffix).
     Suffix(usize),
 
+    /// List the very last jid. This will always be a job, and will always be the last job
+    /// created. This is not the same as `Suffix(1)` which may return a matrix.
+    Last,
+
     /// List all jobs starting with the given one.
     After(Jid),
 
@@ -855,11 +875,16 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
     // Collate the jids for which we will dig deeper.
     let selected_ids = {
         let sorted_ids = {
-            let mut ids: Vec<_> = jids
-                .iter()
-                .map(|k| *k)
-                .chain(matrices.keys().map(|k| *k))
-                .collect();
+            let jids = jids.iter().cloned();
+            let mut ids: Vec<_> = match mode {
+                JobListMode::Last => jids
+                    .chain(matrices.values().flat_map(|m| m.jobs.iter().cloned()))
+                    .collect(),
+                JobListMode::Suffix(_)
+                | JobListMode::After(_)
+                | JobListMode::Jids(_)
+                | JobListMode::Running => jids.chain(matrices.keys().cloned()).collect(),
+            };
             ids.sort();
             ids
         };
@@ -872,6 +897,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
                 JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
                 JobListMode::After(jid) => *j >= jid,
                 JobListMode::Jids(_) | JobListMode::Running => false,
+                JobListMode::Last => *i == len - 1,
             })
             .map(|(_, j)| j)
             .collect();

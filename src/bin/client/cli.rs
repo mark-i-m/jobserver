@@ -2,12 +2,36 @@
 
 use clap::{clap_app, App, AppSettings, Arg, ArgGroup, SubCommand};
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum JidArg {
+    Id(u64),
+    Last,
+}
+
 /// Validator for command line args that should be `usize`.
 fn is_usize(s: String) -> Result<(), String> {
     s.as_str()
         .parse::<usize>()
         .map(|_| ())
         .map_err(|e| format!("{:?}", e))
+}
+
+/// Validator for command line args that should be a JID.
+fn is_jid(s: String) -> Result<(), String> {
+    parse_jid(&s).map(|_| ()).map_err(|e| format!("{:?}", e))
+}
+
+pub fn parse_jid(s: &str) -> Result<JidArg, String> {
+    s.parse::<u64>()
+        .map(|id| JidArg::Id(id))
+        .map_err(|e| format!("{:?}", e))
+        .or_else(|e| {
+            if s.to_lowercase().as_str() == "last" {
+                Ok(JidArg::Last)
+            } else {
+                Err(e)
+            }
+        })
 }
 
 pub(crate) fn build() -> clap::App<'static, 'static> {
@@ -87,7 +111,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
 
             (@subcommand ls =>
                 (about: "List all jobs.")
-                (@arg JID: {is_usize} ... conflicts_with[N] conflicts_with[RUNNING]
+                (@arg JID: {is_jid} ... conflicts_with[N] conflicts_with[RUNNING]
                  "The job IDs of the jobs to list. Unknown job IDs are ignored. \
                   List all jobs if omitted.")
                 (@arg N: -n +takes_value {is_usize} conflicts_with[JID] conflicts_with[RUNNING]
@@ -101,7 +125,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
             (@subcommand rm =>
                 (about: "Cancel a running/scheduled job OR delete a finished/failed job.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize} ...
+                (@arg JID: +required {is_jid} ...
                  "The job ID(s) of the job(s) to cancel")
                 (@arg FORGET: -f --forget
                  "Remove the task from the history and garbage collect it.")
@@ -117,7 +141,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
 
                 (@group WHICH =>
                     (@attributes +required +multiple)
-                    (@arg ID: --id +takes_value {is_usize} ...
+                    (@arg ID: --id +takes_value {is_jid} ...
                      "The job or matrix ID(s) for jobs to output.")
                     (@arg AFTER: --after {is_usize}
                      "Use all jobs whose IDs are >= AFTER.")
@@ -184,21 +208,21 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
             (@subcommand hold =>
                 (about: "Put the job on hold.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize} ...
+                (@arg JID: +required {is_jid} ...
                  "The job ID of the job")
             )
 
             (@subcommand unhold =>
                 (about: "Unold the job.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize} ...
+                (@arg JID: +required {is_jid} ...
                  "The job ID of the job")
             )
 
             (@subcommand clone =>
                 (about: "Clone a job.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize} ...
+                (@arg JID: +required {is_jid} ...
                  "The job ID(s) of the job to clone.")
                 (@arg TIMES: -x --times +takes_value {is_usize}
                  "(optional) the number of clones to make (default: 1)")
@@ -207,7 +231,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
             (@subcommand restart =>
                 (about: "Cancel then clone a job.")
                 (@setting ArgRequiredElseHelp)
-                (@arg JID: +required {is_usize} ...
+                (@arg JID: +required {is_jid} ...
                  "The job ID(s) of the job to clone.")
             )
 
@@ -216,7 +240,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 (@setting ArgRequiredElseHelp)
                 (@group WHICH =>
                     (@attributes +required)
-                    (@arg JID: {is_usize} ...
+                    (@arg JID: {is_jid} ...
                      "The job ID of the job for which to print the log path.")
                     (@arg RUNNING: -r --running
                      "Print the log path of all running jobs")
@@ -268,7 +292,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
 
                 (@arg TO: +required
                  "The path to copy the results to.")
-                (@arg JID: +required {is_usize} ...
+                (@arg JID: +required {is_jid} ...
                  "The job ID of the job for which to copy results.")
             )
         )
