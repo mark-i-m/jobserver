@@ -7,6 +7,8 @@
 - Add some more columns to `job stat` for convenience.
 - Add `--only_done` flag to `job stat`to only include jobs that are done.
 - Add retry limits to `job add` and `job matrix add`
+- All command line arguments that expect a JID now also accept the value `last`
+  to indicate the JID of the last job.
 
 ## 0.9.0
 
