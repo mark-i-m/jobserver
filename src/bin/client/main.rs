@@ -894,7 +894,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
             .into_iter()
             .enumerate()
             .filter(|(i, j)| match mode {
-                JobListMode::Suffix(n) => (*i + n >= len) || (len <= n),
+                JobListMode::Suffix(n) => *i + n >= len,
                 JobListMode::After(jid) => *j >= jid,
                 JobListMode::Jids(_) | JobListMode::Running => false,
                 JobListMode::Last => *i == len - 1,
