@@ -1,6 +1,6 @@
 //! Server implmentation
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::net::TcpListener;
 use std::process::{Child, Command};
 use std::sync::{
@@ -55,7 +55,7 @@ struct Server {
     /// It is also completely ok for jobs listed here to be already in a terminal state -- that is,
     /// the list is a superset of jobs that need to be driven. It is also possible for the list to
     /// contain jobs that no longer exist, so users need to check accordingly
-    live_tasks: Arc<Mutex<HashSet<u64>>>,
+    live_tasks: Arc<Mutex<BTreeSet<u64>>>,
 
     /// Information about matrices, by ID.
     matrices: Arc<Mutex<HashMap<u64, Matrix>>>,
@@ -259,7 +259,7 @@ impl Server {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(BTreeMap::new())),
-            live_tasks: Arc::new(Mutex::new(HashSet::new())),
+            live_tasks: Arc::new(Mutex::new(BTreeSet::new())),
             matrices: Arc::new(Mutex::new(HashMap::new())),
             next_jid: AtomicU64::new(0),
             runner,

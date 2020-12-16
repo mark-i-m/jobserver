@@ -1,6 +1,6 @@
 //! Drives the state machine for a single task.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
@@ -28,7 +28,7 @@ impl Server {
         jid: u64,
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
-        live_tasks: &mut HashSet<u64>,
+        live_tasks: &mut BTreeSet<u64>,
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         to_remove: &mut HashSet<u64>,
         to_clone: &mut HashSet<u64>,
