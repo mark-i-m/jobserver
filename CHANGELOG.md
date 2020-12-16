@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.2
+
+- Fixed non-deterministic ordering when running jobs. Now jobs always run
+  starting with the lowest JID again.
+
 ## 0.9.1
 
 - Add the `--stagger` flag for machine setup. This helps avoid resource

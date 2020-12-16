@@ -1,6 +1,6 @@
 [package]
 name = "expjobserver"
-version = "0.9.1"
+version = "0.9.2"
 authors = ["mark-i-m"]
 edition = "2018"
 license = "MIT/Apache-2.0"
