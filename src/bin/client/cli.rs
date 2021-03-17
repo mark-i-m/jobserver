@@ -143,7 +143,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                     (@attributes +required +multiple)
                     (@arg ID: --id +takes_value {is_jid} ...
                      "The job or matrix ID(s) for jobs to output.")
-                    (@arg AFTER: --after {is_usize}
+                    (@arg AFTER: --after +takes_value {is_usize}
                      "Use all jobs whose IDs are >= AFTER.")
                     (@arg RUNNING: --running
                      "Use all running jobs.")
