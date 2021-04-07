@@ -22,7 +22,11 @@ mod cli;
 mod pretty;
 mod stat;
 
+/// The default value of the -n flag of `job ls`.
 const DEFAULT_LS_N: usize = 40;
+
+/// The default filename for storing the JID of the "line".
+const LINE_FNAME: &str = "/.expjobserver-client-line";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Jid(u64);
@@ -181,11 +185,15 @@ fn str_to_jid(addr: &str, jid_str: &str) -> Jid {
 fn main() {
     let matches = cli::build().get_matches();
     let addr = matches.value_of("ADDR").unwrap_or(SERVER_ADDR);
+    let line = std::env::var("HOME")
+        .ok()
+        .and_then(|home| std::fs::read_to_string(home + LINE_FNAME).ok())
+        .and_then(|line_str| line_str.trim().parse::<u64>().ok());
 
-    run_inner(addr, &matches)
+    run_inner(addr, &matches, line)
 }
 
-fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>) {
+fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>) {
     match matches.subcommand() {
         ("ping", _) => {
             let response = make_request(addr, Preq(protocol::PingRequest {}));
@@ -215,7 +223,7 @@ fn run_inner(addr: &str, matches: &clap::ArgMatches<'_>) {
 
         ("var", Some(sub_m)) => handle_var_cmd(addr, sub_m),
 
-        ("job", Some(sub_m)) => handle_job_cmd(addr, sub_m),
+        ("job", Some(sub_m)) => handle_job_cmd(addr, sub_m, line),
 
         _ => unreachable!(),
     }
@@ -373,7 +381,7 @@ fn handle_var_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
     }
 }
 
-fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
+fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>) {
     match matches.subcommand() {
         ("ls", Some(sub_m)) => {
             let suffix = sub_m
@@ -399,7 +407,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     }
                 });
             let jobs = list_jobs(addr, jids);
-            pretty::print_jobs(jobs, true);
+            pretty::print_jobs(jobs, true, line);
         }
 
         ("stat", Some(sub_m)) => stat::handle_stat_cmd(addr, sub_m),
@@ -707,7 +715,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 Msresp(protocol::MatrixStatusResp { jobs, .. }) => {
                     let jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = list_jobs(addr, JobListMode::Jids(jobs));
-                    pretty::print_jobs(jobs, false);
+                    pretty::print_jobs(jobs, false, None);
                 }
                 _ => pretty::print_response(response),
             }

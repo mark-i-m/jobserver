@@ -365,7 +365,12 @@ fn add_matrix_row(table: &mut Table, matrix: MatrixInfo, term_width: u16) {
     table.add_row(row![b->id, status, matrix.class, cmd, "", ""]);
 }
 
-pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool) {
+fn add_line_row(table: &mut Table, _term_width: u16) {
+    table.add_empty_row();
+    table.add_empty_row();
+}
+
+pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool, line: Option<u64>) {
     // Print the summary.
     print_summary(&items);
 
@@ -378,9 +383,25 @@ pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool) {
         "Job", "Status", "Class", "Command", "Machine", "Output"
     ]);
 
+    let mut prev_id = 0;
+
     for item in items.into_iter() {
+        let current_id = match &item {
+            JobOrMatrixInfo::Job(job_info) => job_info.jid.0,
+            JobOrMatrixInfo::Matrix(matrix_info) => matrix_info.id.0,
+        };
+
+        // Output the line if necessary.
+        if let Some(line) = line {
+            if prev_id <= line && line < current_id {
+                add_line_row(&mut table, term_width);
+            }
+        }
+
         match item {
-            JobOrMatrixInfo::Job(job_info) => add_task_row(&mut table, job_info, term_width),
+            JobOrMatrixInfo::Job(job_info) => {
+                add_task_row(&mut table, job_info, term_width);
+            }
             JobOrMatrixInfo::Matrix(matrix_info) => {
                 if collapse_matrices {
                     add_matrix_row(&mut table, matrix_info, term_width);
@@ -390,7 +411,9 @@ pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool) {
                     }
                 }
             }
-        }
+        };
+
+        prev_id = current_id;
     }
 
     table.printstd();
