@@ -383,7 +383,7 @@ pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool, l
         "Job", "Status", "Class", "Command", "Machine", "Output"
     ]);
 
-    let mut prev_id = 0;
+    let mut prev_id = None;
 
     for item in items.into_iter() {
         let current_id = match &item {
@@ -392,7 +392,7 @@ pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool, l
         };
 
         // Output the line if necessary.
-        if let Some(line) = line {
+        if let (Some(line), Some(prev_id)) = (line, prev_id) {
             if prev_id <= line && line < current_id {
                 add_line_row(&mut table, term_width);
             }
@@ -413,7 +413,7 @@ pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool, l
             }
         };
 
-        prev_id = current_id;
+        prev_id = Some(current_id);
     }
 
     table.printstd();
