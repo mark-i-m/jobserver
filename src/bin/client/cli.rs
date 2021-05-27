@@ -251,6 +251,8 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                  "Pass the log path to `less`")
                 (@arg TAIL: -t --tail conflicts_with[LESS]
                  "Pass the log path to `tail -f`")
+                (@arg R: -R requires[LESS]
+                 "Pass the -R flag to less.")
             )
 
             (@subcommand matrix =>

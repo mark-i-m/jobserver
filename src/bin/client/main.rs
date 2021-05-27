@@ -466,7 +466,12 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
             if sub_m.is_present("LESS") {
                 #[cfg(target_family = "unix")]
                 {
-                    let error = std::process::Command::new("less").args(&paths).exec();
+                    let mut cmd = std::process::Command::new("less");
+                    let mut cmd = &mut cmd;
+                    if sub_m.is_present("R") {
+                        cmd = cmd.arg("-R");
+                    }
+                    let error = cmd.args(&paths).exec();
                     println!("exec error: {:?}", error);
                 }
 
