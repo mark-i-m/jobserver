@@ -725,6 +725,7 @@ impl Server {
                             let new_jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
                             let task = Self::clone_task(new_jid, task);
                             let maybe_matrix = task.matrix.clone();
+                            let maybe_tag = task.tag.clone();
 
                             locked_jobs.insert(new_jid, task);
                             self.live_tasks.lock().unwrap().insert(new_jid);
@@ -734,6 +735,16 @@ impl Server {
                                     .lock()
                                     .unwrap()
                                     .get_mut(&matrix)
+                                    .unwrap()
+                                    .jids
+                                    .insert(new_jid);
+                            }
+
+                            if let Some(tag) = maybe_tag {
+                                self.tags
+                                    .lock()
+                                    .unwrap()
+                                    .get_mut(&tag)
                                     .unwrap()
                                     .jids
                                     .insert(new_jid);
