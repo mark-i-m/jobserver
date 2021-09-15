@@ -21,7 +21,7 @@ use log::{error, info, warn};
 
 use prost::Message;
 
-use super::{MachineStatus, Matrix, Server, Task, TaskState, TaskType};
+use super::{MachineStatus, Matrix, Server, Tag, Task, TaskState, TaskType};
 
 impl Task {
     pub fn status(&self) -> protocol::Status {
@@ -294,6 +294,7 @@ impl Server {
                         Task {
                             jid,
                             matrix: None,
+                            tag: None,
                             ty: TaskType::SetupTask,
                             cmds,
                             class,
@@ -348,6 +349,7 @@ impl Server {
                     repeat_on_fail,
                     timeout,
                     maximum_failures,
+                    tagidopt: Some(protocol::add_job_request::Tagidopt::Tag(tag)),
                 }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -357,11 +359,78 @@ impl Server {
                     let cp_results = cp_resultsopt
                         .map(|protocol::add_job_request::CpResultsopt::CpResults(s)| s);
 
+                    let mut locked_tasks = self.tasks.lock().unwrap();
+                    let mut locked_live_tasks = self.live_tasks.lock().unwrap();
+                    let mut locked_tags = self.tags.lock().unwrap();
+
+                    // We need to check if the tag exists.
+                    if let Some(tag) = locked_tags.get_mut(&tag) {
+                        locked_tasks.insert(
+                            jid,
+                            Task {
+                                jid,
+                                matrix: None,
+                                tag: Some(tag.id),
+                                ty: TaskType::Job,
+                                cmds: vec![cmd],
+                                class: Some(class),
+                                cp_results,
+                                state: TaskState::Waiting,
+                                variables,
+                                machine: None,
+                                canceled: None,
+                                repeat_on_fail,
+                                maximum_failures: if maximum_failures >= 0 {
+                                    Some(maximum_failures as usize)
+                                } else {
+                                    None
+                                },
+                                attempt: 0,
+                                timestamp: Utc::now(),
+                                done_timestamp: None,
+                                timeout: if timeout > 0 {
+                                    Some(Duration::minutes(timeout as i64))
+                                } else {
+                                    None
+                                },
+                                timedout: None,
+                            },
+                        );
+                        tag.jids.insert(jid);
+                        locked_live_tasks.insert(jid);
+
+                        Jiresp(protocol::JobIdResp { jid })
+                    } else {
+                        error!("No such tag: {}", tag);
+                        Nstresp(protocol::NoSuchTagResp {})
+                    }
+                }
+
+                Ajreq(protocol::AddJobRequest {
+                    class,
+                    cmd,
+                    cp_resultsopt,
+                    // prost uses a default of `false`.
+                    repeat_on_fail,
+                    timeout,
+                    maximum_failures,
+                    tagidopt: None,
+                }) => {
+                    let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
+
+                    info!("Added job {} with class {}: {}", jid, class, cmd);
+
+                    let variables = self.variables.lock().unwrap().clone();
+                    let cp_results = cp_resultsopt
+                        .map(|protocol::add_job_request::CpResultsopt::CpResults(s)| s);
+
+                    // We need to check if the tag exists.
                     self.tasks.lock().unwrap().insert(
                         jid,
                         Task {
                             jid,
                             matrix: None,
+                            tag: None,
                             ty: TaskType::Job,
                             cmds: vec![cmd],
                             class: Some(class),
@@ -412,7 +481,7 @@ impl Server {
                         .unwrap()
                         .values()
                         .filter_map(|task| {
-                            if matches!(task.state, TaskState::Running{..}) {
+                            if matches!(task.state, TaskState::Running { .. }) {
                                 Some(task.jid)
                             } else {
                                 None
@@ -438,10 +507,13 @@ impl Server {
                             }
                         })
                         .collect();
+                    let tags = self.tags.lock().unwrap().keys().cloned().collect();
+
                     Jresp(protocol::JobsResp {
                         jobs: tasks,
                         matrices,
                         running,
+                        tags,
                     })
                 }
 
@@ -532,6 +604,10 @@ impl Server {
                                     .unwrap()
                                     .matrix
                                     .map(|m| protocol::job_status_resp::Matrixidopt::Matrix(m)),
+                                tagidopt: task
+                                    .unwrap()
+                                    .tag
+                                    .map(|t| protocol::job_status_resp::Tagidopt::Tag(t)),
                                 class: class.as_ref().expect("No class for clone").clone(),
                                 cmd: cmds.first().unwrap().clone(),
                                 status: Some(task.unwrap().status()),
@@ -595,6 +671,10 @@ impl Server {
                                     .unwrap()
                                     .matrix
                                     .map(|m| protocol::job_status_resp::Matrixidopt::Matrix(m)),
+                                tagidopt: task
+                                    .unwrap()
+                                    .tag
+                                    .map(|t| protocol::job_status_resp::Tagidopt::Tag(t)),
                                 class: class.as_ref().map(Clone::clone).unwrap_or("".into()),
                                 cmd,
                                 status: Some(task.unwrap().status()),
@@ -733,6 +813,7 @@ impl Server {
                                 Task {
                                     jid,
                                     matrix: Some(id),
+                                    tag: None,
                                     ty: TaskType::Job,
                                     cmds: vec![cmd.clone()],
                                     class: Some(class.clone()),
@@ -792,6 +873,72 @@ impl Server {
                     } else {
                         error!("No such matrix: {}", id);
                         Nsmatresp(protocol::NoSuchMatrixResp {})
+                    }
+                }
+
+                Tjreq(protocol::TagJobRequest { jid, tagopt }) => {
+                    match self.tasks.lock().unwrap().get_mut(&jid) {
+                        Some(task) => {
+                            if let Some(protocol::tag_job_request::Tagopt::Tag(tag)) = tagopt {
+                                if let Some(tag) = self.tags.lock().unwrap().get_mut(&tag) {
+                                    info!("Added tag {} to job {}", tag.id, jid);
+                                    task.tag = Some(tag.id);
+                                    tag.jids.insert(jid);
+
+                                    Okresp(protocol::OkResp {})
+                                } else {
+                                    error!("No such tag: {}", tag);
+                                    Nstresp(protocol::NoSuchTagResp {})
+                                }
+                            } else {
+                                if let Some(tag) = task.tag {
+                                    info!("Remove tag {} from job {}", tag, jid);
+
+                                    task.tag = None;
+                                    self.tags
+                                        .lock()
+                                        .unwrap()
+                                        .get_mut(&tag)
+                                        .unwrap()
+                                        .jids
+                                        .remove(&jid);
+
+                                    Okresp(protocol::OkResp {})
+                                } else {
+                                    info!("Job {} is already untagged", jid);
+                                    Okresp(protocol::OkResp {})
+                                }
+                            }
+                        }
+
+                        None => {
+                            error!("No such job or setup task: {}", jid);
+                            Nsjresp(protocol::NoSuchJobResp {})
+                        }
+                    }
+                }
+
+                Atreq(protocol::AddTagRequest {}) => {
+                    let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
+                    self.tags.lock().unwrap().insert(
+                        id,
+                        Tag {
+                            id,
+                            jids: HashSet::new(),
+                        },
+                    );
+
+                    Tidresp(protocol::TagIdResp { id })
+                }
+
+                Streq(protocol::StatTagRequest { id }) => {
+                    if let Some(tag) = self.tags.lock().unwrap().get(&id) {
+                        Tsresp(protocol::TagStatusResp {
+                            jobs: tag.jids.iter().cloned().collect(),
+                        })
+                    } else {
+                        error!("No such tag: {}", id);
+                        Nstresp(protocol::NoSuchTagResp {})
                     }
                 }
             };

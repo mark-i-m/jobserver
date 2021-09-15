@@ -6,7 +6,10 @@ message Snapshot {
     map<string, string> variables = 2;
     map<uint64, SnapshotTask> tasks = 3;
     map<uint64, SnapshotMatrix> matrices = 4;
+    map<uint64, SnapshotTag> tags = 6;
     required uint64 next_jid = 5;
+
+    // next id: 7
 }
 
 message SnapshotMachineStatus {
@@ -17,6 +20,7 @@ message SnapshotMachineStatus {
 message SnapshotTask {
     required uint64 jid = 1;
     optional uint64 matrix = 13;
+    optional uint64 tag = 18;
     required SnapshotTaskType ty = 2;
     optional string machine = 3;
     optional string class = 4;
@@ -33,7 +37,7 @@ message SnapshotTask {
     optional uint64 timeout = 14;
     optional uint64 timedout = 15;
 
-    // next id: 18
+    // next id: 19
 }
 
 enum SnapshotTaskType {
@@ -108,4 +112,8 @@ message SnapshotMatrix {
 
 message MatrixVarValues {
     repeated string values = 1;
+}
+
+message SnapshotTag {
+    repeated uint64 jids = 1;
 }

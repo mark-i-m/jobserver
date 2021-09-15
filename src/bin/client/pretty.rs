@@ -1,5 +1,7 @@
 //! Utilities for printing nice human-readable output.
 
+use std::collections::HashMap;
+
 use chrono::offset::Utc;
 
 use console::style;
@@ -22,9 +24,12 @@ pub(crate) fn print_response(resp: protocol::response::ResponseType) {
         Miresp(MatrixIdResp { id }) => println!("OK: {}", id),
         Jsresp(job_status) => println!("{:#?}", job_status),
         Msresp(matrix_status) => println!("{:#?}", matrix_status),
+        Tidresp(TagIdResp { id }) => println!("{:#?}", id),
+        Tsresp(tag_status) => println!("{:#?}", tag_status),
         Nsmresp(_) => println!("No such machine."),
         Nsjresp(_) => println!("No such job."),
         Nsmatresp(_) => println!("No such matrix."),
+        Nstresp(_) => println!("No such tag."),
         Nwresp(_) => println!("Task is not waiting."),
         Ierr(_) => println!("Internal error."),
     };
@@ -39,55 +44,87 @@ macro_rules! style {
     }}
 }
 
-/// Compute and print some summary stats.
-fn print_summary(items: &[JobOrMatrixInfo]) {
-    let mut total_jobs = 0;
-    let mut running_jobs = 0;
-    let mut failed_jobs = 0;
-    let mut done_jobs = 0;
-    let mut waiting_jobs = 0;
-    let mut held_jobs = 0;
-    let mut canceled_jobs = 0;
-    let mut unknown_jobs = 0;
+struct JobSummary {
+    pub total: usize,
+    pub running: usize,
+    pub failed: usize,
+    pub done: usize,
+    pub waiting: usize,
+    pub held: usize,
+    pub canceled: usize,
+    pub unknown: usize,
+}
 
-    let mut count_task = |task: &JobInfo| {
-        total_jobs += 1;
-        match task.status {
-            Status::Running { .. } | Status::CopyResults { .. } => running_jobs += 1,
-            Status::Unknown { .. } => unknown_jobs += 1,
-            Status::Canceled { .. } => canceled_jobs += 1,
-            Status::Waiting => waiting_jobs += 1,
-            Status::Held => held_jobs += 1,
-            Status::Done { .. } => done_jobs += 1,
-            Status::Failed { .. } => failed_jobs += 1,
-        }
-    };
+impl JobSummary {
+    pub fn count<'a>(jobs: impl Iterator<Item = &'a JobInfo>) -> Self {
+        let mut summary = JobSummary {
+            total: 0,
+            running: 0,
+            failed: 0,
+            done: 0,
+            waiting: 0,
+            held: 0,
+            canceled: 0,
+            unknown: 0,
+        };
 
-    for item in items.iter() {
-        match item {
-            JobOrMatrixInfo::Job(job_info) => count_task(job_info),
-            JobOrMatrixInfo::Matrix(matrix_info) => {
-                for job in matrix_info.jobs.iter() {
-                    count_task(job);
-                }
+        for job in jobs {
+            summary.total += 1;
+            match job.status {
+                Status::Running { .. } | Status::CopyResults { .. } => summary.running += 1,
+                Status::Unknown { .. } => summary.unknown += 1,
+                Status::Canceled { .. } => summary.canceled += 1,
+                Status::Waiting => summary.waiting += 1,
+                Status::Held => summary.held += 1,
+                Status::Done { .. } => summary.done += 1,
+                Status::Failed { .. } => summary.failed += 1,
             }
         }
-    }
 
-    let mut summary = format!("{} jobs: ", total_jobs);
-    style!(summary, "{} waiting", waiting_jobs; blue, bright);
+        summary
+    }
+}
+
+/// Compute and print some summary stats.
+fn print_summary(items: &[JobOrMatrixInfo]) {
+    let stats = JobSummary::count(
+        items
+            .iter()
+            .filter_map(|jomi| {
+                if let JobOrMatrixInfo::Job(j) = jomi {
+                    Some(j)
+                } else {
+                    None
+                }
+            })
+            .chain(
+                items
+                    .iter()
+                    .filter_map(|jomi| {
+                        if let JobOrMatrixInfo::Matrix(m) = jomi {
+                            Some(m)
+                        } else {
+                            None
+                        }
+                    })
+                    .flat_map(|matrix_info| matrix_info.jobs.iter()),
+            ),
+    );
+
+    let mut summary = format!("{} jobs: ", stats.total);
+    style!(summary, "{} waiting", stats.waiting; blue, bright);
     summary += ", ";
-    style!(summary, "{} held", held_jobs; blue, bright);
+    style!(summary, "{} held", stats.held; blue, bright);
     summary += ", ";
-    style!(summary, "{} running", running_jobs; yellow);
+    style!(summary, "{} running", stats.running; yellow);
     summary += ", ";
-    style!(summary, "{} done", done_jobs; green);
+    style!(summary, "{} done", stats.done; green);
     summary += ", ";
-    style!(summary, "{} failed", failed_jobs; red, underlined);
+    style!(summary, "{} failed", stats.failed; red, underlined);
     summary += ", ";
-    style!(summary, "{} cancelled", canceled_jobs; red);
+    style!(summary, "{} cancelled", stats.canceled; red);
     summary += ", ";
-    style!(summary, "{} unknown", unknown_jobs; black, bright);
+    style!(summary, "{} unknown", stats.unknown; black, bright);
 
     println!("{}\n", summary);
 }
@@ -291,71 +328,49 @@ fn add_task_row(table: &mut Table, job: JobInfo, term_width: u16) {
 
 /// Add a row to the table representing a whole matrix.
 fn add_matrix_row(table: &mut Table, matrix: MatrixInfo, term_width: u16) {
-    let (running, waiting, held, done, failed, cancelled, unknown) = {
-        let mut running = 0;
-        let mut waiting = 0;
-        let mut held = 0;
-        let mut done = 0;
-        let mut failed = 0;
-        let mut cancelled = 0;
-        let mut unknown = 0;
-        for j in matrix.jobs.iter() {
-            match j.status {
-                Status::Running { .. } | Status::CopyResults { .. } => running += 1,
-                Status::Waiting => waiting += 1,
-                Status::Held => held += 1,
-                Status::Done { .. } => done += 1,
-                Status::Failed { .. } => failed += 1,
-                Status::Canceled { .. } => cancelled += 1,
-                Status::Unknown { .. } => unknown += 1,
-            }
-        }
-
-        (running, waiting, held, done, failed, cancelled, unknown)
-    };
-
+    let stats = JobSummary::count(matrix.jobs.iter());
     let id = format!("{} (matrix)", matrix.id);
 
     let status = {
         let mut status = String::new();
-        if running > 0 {
-            style!(status, "{}R", running; yellow);
+        if stats.running > 0 {
+            style!(status, "{}R", stats.running; yellow);
         }
-        if waiting > 0 {
+        if stats.waiting > 0 {
             if !status.is_empty() {
                 status.push_str(" ");
             }
-            style!(status, "{}W", waiting; blue, bright);
+            style!(status, "{}W", stats.waiting; blue, bright);
         }
-        if held > 0 {
+        if stats.held > 0 {
             if !status.is_empty() {
                 status.push_str(" ");
             }
-            style!(status, "{}H", held; blue, bright);
+            style!(status, "{}H", stats.held; blue, bright);
         }
-        if done > 0 {
+        if stats.done > 0 {
             if !status.is_empty() {
                 status.push_str(" ");
             }
-            style!(status, "{}D", done; green);
+            style!(status, "{}D", stats.done; green);
         }
-        if failed > 0 {
+        if stats.failed > 0 {
             if !status.is_empty() {
                 status.push_str(" ");
             }
-            style!(status, "{}F", failed; red, underlined);
+            style!(status, "{}F", stats.failed; red, underlined);
         }
-        if cancelled > 0 {
+        if stats.canceled > 0 {
             if !status.is_empty() {
                 status.push_str(" ");
             }
-            style!(status, "{}C", cancelled; red);
+            style!(status, "{}C", stats.canceled; red);
         }
-        if unknown > 0 {
+        if stats.unknown > 0 {
             if !status.is_empty() {
                 status.push_str(" ");
             }
-            style!(status, "{}U", unknown; black, bright);
+            style!(status, "{}U", stats.unknown; black, bright);
         }
 
         status
@@ -365,12 +380,69 @@ fn add_matrix_row(table: &mut Table, matrix: MatrixInfo, term_width: u16) {
     table.add_row(row![b->id, status, matrix.class, cmd, "", ""]);
 }
 
+fn add_group_row(table: &mut Table, tag: u64, jobs: Vec<JobInfo>) -> () {
+    let stats = JobSummary::count(jobs.iter());
+    let id = format!("{} (tag)", tag);
+
+    let status = {
+        let mut status = String::new();
+        if stats.running > 0 {
+            style!(status, "{}R", stats.running; yellow);
+        }
+        if stats.waiting > 0 {
+            if !status.is_empty() {
+                status.push_str(" ");
+            }
+            style!(status, "{}W", stats.waiting; blue, bright);
+        }
+        if stats.held > 0 {
+            if !status.is_empty() {
+                status.push_str(" ");
+            }
+            style!(status, "{}H", stats.held; blue, bright);
+        }
+        if stats.done > 0 {
+            if !status.is_empty() {
+                status.push_str(" ");
+            }
+            style!(status, "{}D", stats.done; green);
+        }
+        if stats.failed > 0 {
+            if !status.is_empty() {
+                status.push_str(" ");
+            }
+            style!(status, "{}F", stats.failed; red, underlined);
+        }
+        if stats.canceled > 0 {
+            if !status.is_empty() {
+                status.push_str(" ");
+            }
+            style!(status, "{}C", stats.canceled; red);
+        }
+        if stats.unknown > 0 {
+            if !status.is_empty() {
+                status.push_str(" ");
+            }
+            style!(status, "{}U", stats.unknown; black, bright);
+        }
+
+        status
+    };
+
+    table.add_row(row![b->id, status, "", "", "", ""]);
+}
+
 fn add_line_row(table: &mut Table, _term_width: u16) {
     table.add_empty_row();
     table.add_empty_row();
 }
 
-pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool, line: Option<u64>) {
+pub(crate) fn print_jobs(
+    items: Vec<JobOrMatrixInfo>,
+    collapse_matrices: bool,
+    collapse_tags: bool,
+    line: Option<u64>,
+) {
     // Print the summary.
     print_summary(&items);
 
@@ -383,9 +455,21 @@ pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool, l
         "Job", "Status", "Class", "Command", "Machine", "Output"
     ]);
 
+    let mut tagged = HashMap::new();
     let mut prev_id = None;
 
     for item in items.into_iter() {
+        // Hold onto tagged rows to collapse them, if needed.
+        if collapse_tags && item.job().map(|j| j.tag.is_some()).unwrap_or(false) {
+            if let JobOrMatrixInfo::Job(job) = item {
+                tagged
+                    .entry(job.tag.unwrap())
+                    .or_insert(Vec::new())
+                    .push(job);
+                continue;
+            }
+        }
+
         let current_id = match &item {
             JobOrMatrixInfo::Job(job_info) => job_info.jid.0,
             JobOrMatrixInfo::Matrix(matrix_info) => matrix_info.id.0,
@@ -414,6 +498,13 @@ pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse_matrices: bool, l
         };
 
         prev_id = Some(current_id);
+    }
+
+    // Print groups.
+    if collapse_tags {
+        for (tag, jobs) in tagged.into_iter() {
+            add_group_row(&mut table, tag, jobs);
+        }
     }
 
     table.printstd();

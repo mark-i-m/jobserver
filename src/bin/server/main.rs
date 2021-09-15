@@ -30,10 +30,12 @@ const DUMP_FILENAME: &str = "server-snapshot";
 #[derive(Debug)]
 struct Server {
     // Lock ordering:
+    // - variables
     // - machines
     // - tasks
     // - live_tasks
     // - matrices
+    // - tags
     /// Maps available machines to their classes.
     machines: Arc<Mutex<HashMap<String, MachineStatus>>>,
 
@@ -59,6 +61,9 @@ struct Server {
 
     /// Information about matrices, by ID.
     matrices: Arc<Mutex<HashMap<u64, Matrix>>>,
+
+    /// Information about tags, by ID.
+    tags: Arc<Mutex<HashMap<u64, Tag>>>,
 
     /// The next job ID to be assigned.
     next_jid: AtomicU64,
@@ -142,6 +147,9 @@ struct Task {
     /// The task's matrix ID, if any.
     matrix: Option<u64>,
 
+    /// The task's tag ID, if any.
+    tag: Option<u64>,
+
     /// The type of the task (a job or setup task).
     ty: TaskType,
 
@@ -217,6 +225,17 @@ struct Matrix {
     jids: HashSet<u64>,
 }
 
+/// A collection of tasks that have been marked with a specific tag purely for organizational
+/// purposes.
+#[derive(Clone, Debug)]
+struct Tag {
+    /// The tag's ID.
+    id: u64,
+
+    /// A list of jobs in this tag.
+    jids: HashSet<u64>,
+}
+
 /// Information about a single machine.
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
 struct MachineStatus {
@@ -261,6 +280,7 @@ impl Server {
             tasks: Arc::new(Mutex::new(BTreeMap::new())),
             live_tasks: Arc::new(Mutex::new(BTreeSet::new())),
             matrices: Arc::new(Mutex::new(HashMap::new())),
+            tags: Arc::new(Mutex::new(HashMap::new())),
             next_jid: AtomicU64::new(0),
             runner,
             log_dir,
@@ -341,6 +361,7 @@ impl Server {
                 let mut locked_live_tasks = self.live_tasks.lock().unwrap();
                 let live_tasks_snapshot = locked_live_tasks.clone();
                 let mut locked_matrices = self.matrices.lock().unwrap();
+                let mut locked_tags = self.tags.lock().unwrap();
 
                 debug!("Machine stata: {:?}", *locked_machines);
 
@@ -377,11 +398,17 @@ impl Server {
                         jid,
                         matrix: Some(m),
                         ..
-                    }) = old_task
+                    }) = &old_task
                     {
                         let _ = locked_matrices.get_mut(&m).unwrap().jids.remove(&jid);
                     }
                     locked_live_tasks.remove(&jid);
+                    if let Some(Task {
+                        jid, tag: Some(t), ..
+                    }) = &old_task
+                    {
+                        let _ = locked_tags.get_mut(&t).unwrap().jids.remove(&jid);
+                    }
                 }
 
                 // Remove any empty matrices.
@@ -429,6 +456,7 @@ impl Server {
             Task {
                 jid,
                 matrix,
+                tag,
                 ty: TaskType::Job,
                 cmds,
                 class,
@@ -455,6 +483,7 @@ impl Server {
                 Task {
                     jid: new_jid,
                     matrix: matrix.clone(),
+                    tag: tag.clone(),
                     ty: TaskType::Job,
                     cmds,
                     class,
@@ -476,6 +505,7 @@ impl Server {
             Task {
                 jid,
                 matrix: None,
+                tag,
                 ty: TaskType::SetupTask,
                 cmds,
                 class,
@@ -501,10 +531,12 @@ impl Server {
                 let class = class.clone();
                 let machine = machine.clone();
                 let variables = variables.clone();
+                let tag = tag.clone();
 
                 Task {
                     jid: new_jid,
                     matrix: None,
+                    tag,
                     ty: TaskType::SetupTask,
                     cmds,
                     class,

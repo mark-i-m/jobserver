@@ -20,6 +20,9 @@ message Request {
         UnholdJobRequest ujreq = 14;
         AddMatrixRequest  amreq = 15;
         StatMatrixRequest smreq = 16;
+        TagJobRequest tjreq = 17;
+        AddTagRequest atreq = 18;
+        StatTagRequest streq = 19;
     }
 }
 
@@ -39,6 +42,9 @@ message Response {
         NoSuchMatrixResp nsmatresp = 11;
         NotWaitingResp nwresp = 12;
         InternalError ierr = 13;
+        NoSuchTagResp nstresp = 14;
+        TagIdResp tidresp = 15;
+        TagStatusResp tsresp = 16;
     }
 }
 
@@ -118,6 +124,11 @@ message AddJobRequest {
     // The number of failures allowed before retries stop.
     // Infinite retries are allowed if negative.
     int64 maximum_failures = 6;
+
+    // The tag to apply to the job, if any.
+    oneof tagidopt {
+        uint64 tag = 7;
+    }
 }
 
 // Get a list of job IDs.
@@ -192,6 +203,23 @@ message StatMatrixRequest {
     uint64 id = 1;
 }
 
+message TagJobRequest {
+    // The ID of the job to tag.
+    uint64 jid = 1;
+
+    // The ID of the tag to set, or none to unset.
+    oneof tagopt {
+        uint64 tag = 2;
+    }
+}
+
+message AddTagRequest { }
+
+message StatTagRequest {
+    // The ID of the tag.
+    uint64 id = 1;
+}
+
 message MatrixVarValues {
     repeated string values = 1;
 }
@@ -218,6 +246,7 @@ message JobsResp {
     repeated uint64 jobs = 1;
     repeated MatrixStatusResp matrices = 2;
     repeated uint64 running = 3;
+    repeated uint64 tags = 4;
 }
 
 // A list of variables and their values.
@@ -242,6 +271,9 @@ message JobStatusResp {
     uint64 jid = 3;
     oneof matrixidopt {
         uint64 matrix = 10;
+    }
+    oneof tagidopt {
+        uint64 tag = 11;
     }
     Status status = 4;
     map<string, string> variables = 5;
@@ -279,6 +311,17 @@ message MatrixStatusResp {
     map<string, MatrixVarValues> variables = 6;
 }
 
+// Succeeded. The id of the new tag.
+message TagIdResp {
+    uint64 id = 1;
+}
+
+// Succeeded. The status of a tag.
+message TagStatusResp {
+    // The job IDs that comprise the matrix.
+    repeated uint64 jobs = 1;
+}
+
 // Error. The requested machine does not exist.
 message NoSuchMachineResp { }
 
@@ -294,6 +337,9 @@ message NotWaitingResp { }
 
 // Error. The server has an internal error.
 message InternalError { }
+
+// Error. No such tag.
+message NoSuchTagResp { }
 
 // The status of a job.
 message Status {

@@ -26,6 +26,7 @@ mod serialize {
             Task {
                 jid: self.jid,
                 matrix: self.matrix,
+                tag: self.tag,
                 ty: match self.ty() {
                     SnapshotTaskType::Job => TaskType::Job,
                     SnapshotTaskType::SetupTask => TaskType::SetupTask,
@@ -151,6 +152,7 @@ mod serialize {
             let st = SnapshotTask {
                 jid: task.jid,
                 matrix: task.matrix,
+                tag: task.tag,
                 ty,
                 machine: task.machine.clone(),
                 class: task.class.clone(),
@@ -212,6 +214,23 @@ mod serialize {
         }
     }
 
+    impl SnapshotTag {
+        pub(crate) fn to_tag(tag: &Self, id: u64) -> Tag {
+            Tag {
+                id,
+                jids: tag.jids.iter().cloned().collect(),
+            }
+        }
+    }
+
+    impl From<&Tag> for SnapshotTag {
+        fn from(tag: &Tag) -> Self {
+            SnapshotTag {
+                jids: tag.jids.iter().cloned().collect(),
+            }
+        }
+    }
+
     impl From<&Server> for Snapshot {
         fn from(server: &Server) -> Self {
             let machines = server
@@ -246,12 +265,21 @@ mod serialize {
                 .map(|(m, s)| (*m, s.into()))
                 .collect();
 
+            let tags = server
+                .tags
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(t, s)| (*t, s.into()))
+                .collect();
+
             Snapshot {
                 machines,
                 variables: server.variables.lock().unwrap().clone(),
                 tasks,
                 matrices,
                 next_jid: server.next_jid.load(Ordering::Relaxed),
+                tags,
             }
         }
     }
@@ -312,6 +340,7 @@ impl Server {
             tasks,
             matrices,
             next_jid,
+            tags,
         } = snapshot;
 
         // We free everything since we have no way to reconnect to sessions. But we do keep track
@@ -343,6 +372,10 @@ impl Server {
             .map(|(jid, task)| (jid, task.to_task(&mut was_running)))
             .collect();
         *self.matrices.lock().unwrap() = matrices.iter().map(|(m, s)| (*m, s.into())).collect();
+        *self.tags.lock().unwrap() = tags
+            .iter()
+            .map(|(t, s)| (*t, serialize::SnapshotTag::to_tag(s, *t)))
+            .collect();
         self.next_jid.store(next_jid, Ordering::Relaxed);
 
         // Older versions of the server would leave forgotten jids in matrices. If there are any,

@@ -107,6 +107,8 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                   the job killed.")
                 (@arg MAX_FAILURES: --max_failures +takes_value requires[RETRY]
                  "(optional) the number of failures before the server stops retrying.")
+                (@arg TAG: --tag +takes_value {is_usize}
+                 "(optional) the id of the tag to apply.")
             )
 
             (@subcommand ls =>
@@ -284,7 +286,7 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                     (about: "Get information on the status of a matrix.")
                     (@setting ArgRequiredElseHelp)
                     (@arg ID: +required {is_usize}
-                     "The matrix ID of the matrix")
+                     "The matrix ID of the matrix.")
                 )
             )
 
@@ -296,6 +298,37 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                  "The path to copy the results to.")
                 (@arg JID: +required {is_jid} ...
                  "The job ID of the job for which to copy results.")
+            )
+
+            (@subcommand tag =>
+                (about: "Adjust job tags.")
+                (@setting ArgRequiredElseHelp)
+
+                (@subcommand set =>
+                    (about: "Set the tag of the given job(s).")
+
+                    (@arg JID: +required {is_jid} ...
+                     "The job ID of the job to tag.")
+                    (@arg TAG: +required {is_usize}
+                     "The tag to apply.")
+                )
+
+                (@subcommand unset =>
+                    (about: "Remove the tag of the given job(s), leaving them untagged.")
+                    (@arg JID: +required {is_jid} ...
+                     "The job ID of the job to tag.")
+                )
+
+                (@subcommand new =>
+                    (about: "Create a new tag.")
+                )
+
+                (@subcommand ls =>
+                    (about: "List the jobs in the tag.")
+                    (@setting ArgRequiredElseHelp)
+                    (@arg ID: +required {is_usize}
+                     "The tag ID of the tag.")
+                )
             )
         )
     }).subcommand(build_machine_subcommand())

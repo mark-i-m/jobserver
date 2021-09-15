@@ -1,6 +1,6 @@
 //! Client implmentation
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::path::PathBuf;
@@ -407,7 +407,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                     }
                 });
             let jobs = list_jobs(addr, jids);
-            pretty::print_jobs(jobs, true, line);
+            pretty::print_jobs(jobs, true, true, line);
         }
 
         ("stat", Some(sub_m)) => stat::handle_stat_cmd(addr, sub_m),
@@ -513,6 +513,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                 .value_of("MAX_FAILURES")
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(-1);
+            let tag = sub_m
+                .value_of("TAG")
+                .map(|s| s.parse().unwrap())
+                .map(|t| protocol::add_job_request::Tagidopt::Tag(t));
 
             for _ in 0..nclones {
                 let req = Ajreq(protocol::AddJobRequest {
@@ -524,6 +528,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                     repeat_on_fail: retry,
                     timeout,
                     maximum_failures,
+                    tagidopt: tag.clone(),
                 });
 
                 let response = make_request(addr, req);
@@ -664,6 +669,76 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
             }
         }
 
+        ("tag", Some(sub_m)) => handle_tag_cmd(addr, sub_m),
+
+        _ => unreachable!(),
+    }
+}
+
+fn handle_tag_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
+    match matches.subcommand() {
+        ("set", Some(sub_m)) => {
+            let jobs: Vec<_> = sub_m
+                .values_of("JID")
+                .unwrap()
+                .map(|s| str_to_jid(addr, s))
+                .collect();
+            let tag = sub_m.value_of("TAG").map(|s| s.parse().unwrap()).unwrap();
+
+            for job in jobs.into_iter() {
+                let req = Tjreq(protocol::TagJobRequest {
+                    jid: job.jid(),
+                    tagopt: Some(protocol::tag_job_request::Tagopt::Tag(tag)),
+                });
+
+                let response = make_request(addr, req);
+                pretty::print_response(response);
+            }
+        }
+
+        ("unset", Some(sub_m)) => {
+            let jobs: Vec<_> = sub_m
+                .values_of("JID")
+                .unwrap()
+                .map(|s| str_to_jid(addr, s))
+                .collect();
+
+            for job in jobs.into_iter() {
+                let req = Tjreq(protocol::TagJobRequest {
+                    jid: job.jid(),
+                    tagopt: None,
+                });
+
+                let response = make_request(addr, req);
+                pretty::print_response(response);
+            }
+        }
+
+        ("new", Some(_sub_m)) => {
+            let req = Atreq(protocol::AddTagRequest {});
+
+            let response = make_request(addr, req);
+            pretty::print_response(response);
+        }
+
+        ("ls", Some(sub_m)) => {
+            let response = make_request(
+                addr,
+                Streq(protocol::StatTagRequest {
+                    id: sub_m.value_of("ID").unwrap().parse().unwrap(),
+                }),
+            );
+
+            match response {
+                Tsresp(protocol::TagStatusResp { jobs }) => {
+                    let jobs = jobs.into_iter().map(Jid::new).collect();
+                    let jobs = list_jobs(addr, JobListMode::Jids(jobs));
+                    pretty::print_jobs(jobs, false, false, None);
+                }
+                _ => pretty::print_response(response),
+            }
+        }
+
         _ => unreachable!(),
     }
 }
@@ -720,7 +795,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 Msresp(protocol::MatrixStatusResp { jobs, .. }) => {
                     let jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = list_jobs(addr, JobListMode::Jids(jobs));
-                    pretty::print_jobs(jobs, false, None);
+                    pretty::print_jobs(jobs, false, false, None);
                 }
                 _ => pretty::print_response(response),
             }
@@ -780,6 +855,7 @@ struct JobInfo {
     cmd: String,
     jid: Jid,
     matrix: Option<u64>,
+    tag: Option<u64>,
     status: Status,
     variables: HashMap<String, String>,
     cp_results: String,
@@ -833,14 +909,24 @@ enum JobOrMatrixInfo {
     Matrix(MatrixInfo),
 }
 
+impl JobOrMatrixInfo {
+    pub fn job(&self) -> Option<&JobInfo> {
+        match self {
+            JobOrMatrixInfo::Job(j) => Some(j),
+            JobOrMatrixInfo::Matrix(_) => None,
+        }
+    }
+}
+
 fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
     // Collect info about existing jobs and matrices.
     let job_ids = make_request(addr, Ljreq(protocol::ListJobsRequest {}));
-    let (jids, mut matrices, running): (Vec<_>, HashMap<_, _>, Vec<_>) =
+    let (jids, mut matrices, running, tags): (Vec<_>, HashMap<_, _>, Vec<_>, HashSet<_>) =
         if let Jresp(protocol::JobsResp {
             jobs,
             matrices,
             running,
+            tags,
         }) = job_ids
         {
             let matrices = matrices
@@ -880,7 +966,9 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
 
             let running = running.into_iter().map(Jid::new).collect();
 
-            (jobs, matrices, running)
+            let tags = tags.into_iter().map(Jid::new).collect();
+
+            (jobs, matrices, running, tags)
         } else {
             unreachable!();
         };
@@ -947,12 +1035,29 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
                 cp_results,
                 variables,
             }))
+        } else if tags.contains(&id) {
+            if let Some(jobs) = stat_tag(addr, id) {
+                for job_info in jobs.into_iter().filter_map(|jid| stat_job(addr, jid)) {
+                    info.push(JobOrMatrixInfo::Job(job_info))
+                }
+            }
         } else if let Some(job_info) = stat_job(addr, id) {
             info.push(JobOrMatrixInfo::Job(job_info))
         }
     }
 
     info
+}
+
+fn stat_tag(addr: &str, id: Jid) -> Option<Vec<Jid>> {
+    let status = make_request(addr, Streq(protocol::StatTagRequest { id: id.jid() }));
+
+    if let Tsresp(protocol::TagStatusResp { jobs }) = status {
+        Some(jobs.into_iter().map(Jid::new).collect())
+    } else {
+        println!("Unable to find tag {}", id);
+        None
+    }
 }
 
 fn stat_job(addr: &str, jid: Jid) -> Option<JobInfo> {
@@ -963,6 +1068,7 @@ fn stat_job(addr: &str, jid: Jid) -> Option<JobInfo> {
         cmd,
         jid,
         matrixidopt,
+        tagidopt,
         status,
         variables,
         timestamp,
@@ -977,6 +1083,7 @@ fn stat_job(addr: &str, jid: Jid) -> Option<JobInfo> {
             cmd,
             jid: Jid::new(jid),
             matrix: matrixidopt.map(|protocol::job_status_resp::Matrixidopt::Matrix(id)| id),
+            tag: tagidopt.map(|protocol::job_status_resp::Tagidopt::Tag(tag)| tag),
             status,
             variables,
             cp_results,
