@@ -421,6 +421,7 @@ impl Server {
                     let old_task = locked_tasks.get(&jid).unwrap();
                     let mut task = Self::clone_task(new_jid, old_task);
                     let maybe_matrix = task.matrix.clone();
+                    let maybe_tag = task.tag.clone();
 
                     task.attempt = old_task.attempt + 1;
 
@@ -433,6 +434,9 @@ impl Server {
                             .unwrap()
                             .jids
                             .insert(new_jid);
+                    }
+                    if let Some(tag) = maybe_tag {
+                        locked_tags.get_mut(&tag).unwrap().jids.insert(new_jid);
                     }
                 }
 
