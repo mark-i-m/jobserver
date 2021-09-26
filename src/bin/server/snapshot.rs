@@ -318,7 +318,7 @@ impl Server {
 
         info!("Attempting to load snapshot from {}", filename);
 
-        let bytes = match std::fs::read(filename) {
+        let bytes = match std::fs::read(&filename) {
             Ok(bytes) => bytes,
             Err(err) => {
                 error!("Unable to read snapshot from disk: {}", err);
@@ -333,6 +333,10 @@ impl Server {
                 return false;
             }
         };
+
+        // If the snapshot was in tact, make a backup just in case.
+        std::fs::copy(&filename, format!("{}.backup", filename))
+            .expect("Unable to copy snapshot to backup.");
 
         let Snapshot {
             machines,
