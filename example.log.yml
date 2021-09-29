@@ -10,8 +10,9 @@ appenders:
       pattern: "[{d} {h({l})}] {f}:{L} {m}{n}"
 
   logfile:
-    kind: file
+    kind: rolling_file
     path: "/nobackup/scratch/jobserver.log"
+    append: true
     encoder:
       pattern: "[{d} {h({l})}] {f}:{L} {m}{n}"
     # To keep logs compact, don't write debugging info
@@ -19,9 +20,19 @@ appenders:
       - compact:
         kind: threshold
         level: info
+    # Log rolling
+    policy:
+      kind: compound
+      trigger:
+        kind: size
+        limit: 1 gb
+      roller:
+        kind: fixed_window
+        pattern: "/nobackup/scratch/jobserver.{}.log"
+        count: 5
 
 loggers:
-  # All log entries from the `expjobserver` binary go to the stdout and logfile appenders
+  # All log entries from the `server` binary go to the stdout and logfile appenders
   expjobserver:
     level: debug
     appenders:
