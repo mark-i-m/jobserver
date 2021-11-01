@@ -244,6 +244,10 @@ struct MachineStatus {
 
     /// What job it is running, if any.
     running: Option<u64>,
+
+    /// The number of failures since the machine's class was sent or a successful job. If the
+    /// machine experiences too many consecutive failures, it will be moved to a different class.
+    failures: usize,
 }
 
 /// Information about a job run by the server.

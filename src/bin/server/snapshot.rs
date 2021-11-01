@@ -363,6 +363,7 @@ impl Server {
                     MachineStatus {
                         class: status.class,
                         running: None,
+                        failures: 0,
                     },
                 )
             })
