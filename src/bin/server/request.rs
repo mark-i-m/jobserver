@@ -226,6 +226,7 @@ impl Server {
                         MachineStatus {
                             class,
                             running: running_job,
+                            failures: 0,
                         },
                     );
 

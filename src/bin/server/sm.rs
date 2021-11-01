@@ -20,6 +20,9 @@ use super::{
 
 const UNKNOWN_HOST_ERROR_CLASS: &str = "error-unknown-host";
 
+/// The number of consecutive job failures before the machine is considered to be faulty.
+const MACHINE_FAILURES: usize = 4;
+
 impl Server {
     /// Attempts to drive the given task's state machine forward one step.
     pub fn try_drive_sm(
@@ -146,6 +149,13 @@ impl Server {
             }
 
             TaskState::Error { n, ref error } => {
+                // If there is an associated machine, increase its error count.
+                if let Some(machine) = task.machine.as_ref() {
+                    if let Some(machine_status) = machines.get_mut(machine) {
+                        machine_status.failures += 1;
+                    }
+                }
+
                 // Free any associated machine.
                 Self::free_machine(jid, task, machines);
 
@@ -349,11 +359,17 @@ impl Server {
     fn try_drive_sm_checking_results(
         jid: u64,
         task: &mut Task,
-        _machines: &mut HashMap<String, MachineStatus>,
+        machines: &mut HashMap<String, MachineStatus>,
         _running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         copy_thread_queue: Arc<Mutex<CopierThreadQueue>>,
         log_dir: &str,
     ) -> bool {
+        // The job must have run successfully to get here, so we can reset the machine's failure
+        // count. The machine can be `None` if it is a setup task.
+        if let Some(machine_status) = machines.get_mut(task.machine.as_ref().unwrap()) {
+            machine_status.failures = 0;
+        }
+
         // Look through the stdout for the "RESULTS: " line to get the results path.
         let results_path = {
             let cmd = task.cmds.last().unwrap();
@@ -467,6 +483,7 @@ impl Server {
                         MachineStatus {
                             class: class.clone(),
                             running: running_job,
+                            failures: 0,
                         },
                     );
                 }
@@ -601,6 +618,13 @@ impl Server {
                     if running_task == jid {
                         info!("Freeing machine {} used by task {}", machine, jid);
                         machine_status.running = None;
+
+                        // If the failure count exceeds the threshold, move the machine to a
+                        // different class.
+                        if machine_status.failures >= MACHINE_FAILURES {
+                            machine_status.class = format!("{}-broken", machine_status.class);
+                        }
+
                         return true;
                     }
                 }
