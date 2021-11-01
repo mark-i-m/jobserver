@@ -407,7 +407,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                     }
                 });
             let jobs = list_jobs(addr, jids);
-            pretty::print_jobs(jobs, true, true, line);
+            pretty::print_jobs(jobs, true, !is_running, line);
         }
 
         ("stat", Some(sub_m)) => stat::handle_stat_cmd(addr, sub_m),
