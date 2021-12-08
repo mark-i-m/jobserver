@@ -919,6 +919,13 @@ impl JobOrMatrixInfo {
             JobOrMatrixInfo::Matrix(_) => None,
         }
     }
+
+    pub fn id(&self) -> Jid {
+        match self {
+            JobOrMatrixInfo::Job(j) => j.jid,
+            JobOrMatrixInfo::Matrix(m) => m.id,
+        }
+    }
 }
 
 fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
