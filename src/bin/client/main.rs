@@ -390,6 +390,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                 .unwrap_or(DEFAULT_LS_N);
             let is_after = sub_m.is_present("AFTER");
             let is_running = sub_m.is_present("RUNNING");
+            let is_specific = is_running || (sub_m.is_present("JID") && !is_after);
             let jids = sub_m
                 .values_of("JID")
                 .map(|v| {
@@ -407,7 +408,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                     }
                 });
             let jobs = list_jobs(addr, jids);
-            pretty::print_jobs(jobs, true, !is_running, line);
+            pretty::print_jobs(jobs, true, !is_specific, line);
         }
 
         ("stat", Some(sub_m)) => stat::handle_stat_cmd(addr, sub_m),
@@ -879,8 +880,10 @@ struct MatrixInfo {
     class: String,
     cmd: String,
     id: Jid,
+    #[allow(dead_code)]
     cp_results: Option<String>,
     jobs: Vec<JobInfo>,
+    #[allow(dead_code)]
     variables: HashMap<String, Vec<String>>,
 }
 

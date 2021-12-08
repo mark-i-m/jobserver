@@ -176,6 +176,8 @@ fn truncate_cmd(cmd: &str, term_width: u16) -> String {
 fn add_task_row(table: &mut Table, job: JobInfo, term_width: u16) {
     let jid = if let Some(matrix) = job.matrix {
         format!("{}:{}", matrix, job.jid)
+    } else if let Some(tag) = job.tag {
+        format!("{}:{}", tag, job.jid)
     } else {
         format!("{}", job.jid)
     };

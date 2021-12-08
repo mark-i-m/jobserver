@@ -253,15 +253,18 @@ struct MachineStatus {
 /// Information about a job run by the server.
 #[derive(Debug)]
 struct JobProcessInfo {
+    #[allow(dead_code)]
     child: Command,
 
     /// The child process running the actual job.
     handle: Child,
 
     /// The filename of the stdout file.
+    #[allow(dead_code)]
     stdout: String,
 
     /// The filename of the stderr file.
+    #[allow(dead_code)]
     stderr: String,
 }
 
