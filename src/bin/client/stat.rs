@@ -176,6 +176,7 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
         .flat_map(|j| match j {
             JobOrMatrixInfo::Job(ji) => vec![ji],
             JobOrMatrixInfo::Matrix(mi) => mi.jobs,
+            JobOrMatrixInfo::Tag(ti) => ti.jobs,
         })
         .collect();
 

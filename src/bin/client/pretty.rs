@@ -1,7 +1,5 @@
 //! Utilities for printing nice human-readable output.
 
-use std::collections::{BTreeMap, LinkedList};
-
 use chrono::offset::Utc;
 
 use console::style;
@@ -439,12 +437,8 @@ fn add_line_row(table: &mut Table, _term_width: u16) {
     table.add_empty_row();
 }
 
-pub(crate) fn print_jobs(
-    items: Vec<JobOrMatrixInfo>,
-    collapse_matrices: bool,
-    collapse_tags: bool,
-    line: Option<u64>,
-) {
+/// Pretty print a list of items, including matrices, tags, or individual jobs.
+pub(crate) fn print_jobs(items: Vec<JobOrMatrixInfo>, collapse: bool, line: Option<u64>) {
     // Print the summary.
     print_summary(&items);
 
@@ -457,78 +451,42 @@ pub(crate) fn print_jobs(
         "Job", "Status", "Class", "Command", "Machine", "Output"
     ]);
 
-    let mut tagged = BTreeMap::new();
-    let mut untagged = LinkedList::new(); // sorted
     let mut prev_id = None;
 
     // First, pull out tagged items if needed, so we can collapse them and print the tags in order
     // with other tasks...
     for item in items.into_iter() {
-        // Hold onto tagged rows to collapse them, if needed.
-        if collapse_tags && item.job().map(|j| j.tag.is_some()).unwrap_or(false) {
-            if let JobOrMatrixInfo::Job(job) = item {
-                tagged
-                    .entry(job.tag.unwrap())
-                    .or_insert(Vec::new())
-                    .push(job);
+        let current_id = item.id().jid();
+
+        // Output the line if necessary.
+        if let (Some(line), Some(prev_id)) = (line, prev_id) {
+            if prev_id <= line && line < current_id {
+                add_line_row(&mut table, term_width);
             }
-        } else {
-            untagged.push_back(item);
         }
-    }
 
-    // Output in sorted order.
-    while !tagged.is_empty() || !untagged.is_empty() {
-        // Decide whether to take the next tag or untagged item.
-        let take_tag = if tagged.is_empty() {
-            false
-        } else {
-            if untagged.is_empty() {
-                true
-            } else {
-                untagged.front().unwrap().id().jid() > *tagged.iter().next().unwrap().0
+        match item {
+            JobOrMatrixInfo::Job(job_info) => {
+                add_task_row(&mut table, job_info, term_width);
             }
-        };
-
-        let current_id = if take_tag {
-            let (tag, jobs) = {
-                let min_tag = *tagged.iter().next().unwrap().0;
-                tagged.remove_entry(&min_tag).unwrap()
-            };
-            add_group_row(&mut table, tag, jobs);
-
-            tag
-        } else {
-            let item = untagged.pop_front().unwrap();
-
-            let current_id = match &item {
-                JobOrMatrixInfo::Job(job_info) => job_info.jid.0,
-                JobOrMatrixInfo::Matrix(matrix_info) => matrix_info.id.0,
-            };
-
-            // Output the line if necessary.
-            if let (Some(line), Some(prev_id)) = (line, prev_id) {
-                if prev_id <= line && line < current_id {
-                    add_line_row(&mut table, term_width);
-                }
-            }
-
-            match item {
-                JobOrMatrixInfo::Job(job_info) => {
-                    add_task_row(&mut table, job_info, term_width);
-                }
-                JobOrMatrixInfo::Matrix(matrix_info) => {
-                    if collapse_matrices {
-                        add_matrix_row(&mut table, matrix_info, term_width);
-                    } else {
-                        for job_info in matrix_info.jobs.into_iter() {
-                            add_task_row(&mut table, job_info, term_width);
-                        }
+            JobOrMatrixInfo::Matrix(matrix_info) => {
+                if collapse {
+                    add_matrix_row(&mut table, matrix_info, term_width);
+                } else {
+                    for job_info in matrix_info.jobs.into_iter() {
+                        add_task_row(&mut table, job_info, term_width);
                     }
                 }
-            };
-
-            current_id
+            }
+            JobOrMatrixInfo::Tag(tag_info) => {
+                if collapse {
+                    add_group_row(&mut table, tag_info.id.jid(), tag_info.jobs);
+                } else {
+                    for job_info in tag_info.jobs.into_iter() {
+                        add_task_row(&mut table, job_info, term_width);
+                    }
+                }
+            }
         };
 
         prev_id = Some(current_id);

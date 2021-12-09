@@ -53,7 +53,7 @@ impl std::fmt::Display for Jid {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// A more idiomatic version of `protocol::Status`.
 pub enum Status {
     /// The job is waiting to run.
@@ -177,6 +177,7 @@ fn str_to_jid(addr: &str, jid_str: &str) -> Jid {
             .map(|jomi| match jomi {
                 JobOrMatrixInfo::Job(j) => j.jid,
                 JobOrMatrixInfo::Matrix(_) => unreachable!(),
+                JobOrMatrixInfo::Tag(_) => unreachable!(),
             })
             .expect("Unable to get last job."),
     }
@@ -390,7 +391,6 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                 .unwrap_or(DEFAULT_LS_N);
             let is_after = sub_m.is_present("AFTER");
             let is_running = sub_m.is_present("RUNNING");
-            let is_specific = is_running || (sub_m.is_present("JID") && !is_after);
             let jids = sub_m
                 .values_of("JID")
                 .map(|v| {
@@ -408,7 +408,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                     }
                 });
             let jobs = list_jobs(addr, jids);
-            pretty::print_jobs(jobs, true, !is_specific, line);
+            pretty::print_jobs(jobs, true, line);
         }
 
         ("stat", Some(sub_m)) => stat::handle_stat_cmd(addr, sub_m),
@@ -610,6 +610,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                         println!("ID {} is a matrix. Skipping.", mi.id);
                         continue;
                     }
+                    JobOrMatrixInfo::Tag(ti) => {
+                        println!("ID {} is a tag. Skipping.", ti.id);
+                        continue;
+                    }
                     JobOrMatrixInfo::Job(ji) => ji,
                 };
 
@@ -734,7 +738,7 @@ fn handle_tag_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 Tsresp(protocol::TagStatusResp { jobs }) => {
                     let jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = list_jobs(addr, JobListMode::Jids(jobs));
-                    pretty::print_jobs(jobs, false, false, None);
+                    pretty::print_jobs(jobs, false, None);
                 }
                 _ => pretty::print_response(response),
             }
@@ -796,7 +800,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 Msresp(protocol::MatrixStatusResp { jobs, .. }) => {
                     let jobs = jobs.into_iter().map(Jid::new).collect();
                     let jobs = list_jobs(addr, JobListMode::Jids(jobs));
-                    pretty::print_jobs(jobs, false, false, None);
+                    pretty::print_jobs(jobs, false, None);
                 }
                 _ => pretty::print_response(response),
             }
@@ -850,7 +854,7 @@ fn make_request(
         .expect("Response is unexpectedly empty.")
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct JobInfo {
     class: String,
     cmd: String,
@@ -875,7 +879,7 @@ struct MatrixInfoShallow {
     variables: HashMap<String, Vec<String>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct MatrixInfo {
     class: String,
     cmd: String,
@@ -885,6 +889,12 @@ struct MatrixInfo {
     jobs: Vec<JobInfo>,
     #[allow(dead_code)]
     variables: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+struct TagInfo {
+    id: Jid,
+    jobs: Vec<JobInfo>,
 }
 
 #[derive(Debug)]
@@ -906,24 +916,19 @@ enum JobListMode {
     Running,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum JobOrMatrixInfo {
     Job(JobInfo),
     Matrix(MatrixInfo),
+    Tag(TagInfo),
 }
 
 impl JobOrMatrixInfo {
-    pub fn job(&self) -> Option<&JobInfo> {
-        match self {
-            JobOrMatrixInfo::Job(j) => Some(j),
-            JobOrMatrixInfo::Matrix(_) => None,
-        }
-    }
-
     pub fn id(&self) -> Jid {
         match self {
             JobOrMatrixInfo::Job(j) => j.jid,
             JobOrMatrixInfo::Matrix(m) => m.id,
+            JobOrMatrixInfo::Tag(t) => t.id,
         }
     }
 }
@@ -984,6 +989,11 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
         };
 
     // Collate the jids for which we will dig deeper.
+    let specified_ids = match mode {
+        JobListMode::Jids(ref jids) => jids.clone(),
+        JobListMode::Running => running.clone().into_iter().collect::<BTreeSet<_>>(),
+        _ => BTreeSet::new(),
+    };
     let selected_ids = {
         let sorted_ids = {
             let jids = jids.iter().cloned();
@@ -1013,17 +1023,12 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
             .map(|(_, j)| j)
             .collect();
 
-        match mode {
-            JobListMode::Jids(ref jids) => {
-                selected_ids.extend(jids.iter());
-            }
-            JobListMode::Running => selected_ids.extend(running.iter()),
-            _ => {}
-        }
+        selected_ids.extend(specified_ids.iter());
 
         selected_ids
     };
 
+    let mut processed_tags = HashSet::new();
     let mut info = vec![];
     for id in selected_ids {
         if let Some(MatrixInfoShallow {
@@ -1047,14 +1052,41 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
             }))
         } else if tags.contains(&id) {
             if let Some(jobs) = stat_tag(addr, id) {
+                let mut tag_jobs = Vec::new();
                 for job_info in jobs.into_iter().filter_map(|jid| stat_job(addr, jid)) {
-                    info.push(JobOrMatrixInfo::Job(job_info))
+                    tag_jobs.push(job_info)
                 }
+                info.push(JobOrMatrixInfo::Tag(TagInfo { id, jobs: tag_jobs }));
             }
         } else if let Some(job_info) = stat_job(addr, id) {
-            info.push(JobOrMatrixInfo::Job(job_info))
+            // For tagged jobs that were not explicitly specified, we try to emulate matrices by
+            // lumping them in under the appropriate tag instead of individually.
+            if job_info.tag.is_none() || specified_ids.contains(&job_info.jid) {
+                info.push(JobOrMatrixInfo::Job(job_info))
+            } else {
+                let tag_id = Jid::new(job_info.tag.unwrap());
+
+                if !processed_tags.contains(&tag_id) {
+                    if let Some(jobs) = stat_tag(addr, tag_id) {
+                        let mut tag_jobs = Vec::new();
+                        for job_info in jobs.into_iter().filter_map(|jid| stat_job(addr, jid)) {
+                            tag_jobs.push(job_info)
+                        }
+                        info.push(JobOrMatrixInfo::Tag(TagInfo {
+                            id: tag_id,
+                            jobs: tag_jobs,
+                        }));
+                    }
+
+                    processed_tags.insert(tag_id);
+                }
+            }
         }
     }
+
+    // Do one last sorting by id. Adding in tags might have messed up the ordering. This should be
+    // fast because the list is mostly already sorted.
+    info.sort_unstable_by_key(|i| i.id());
 
     info
 }
