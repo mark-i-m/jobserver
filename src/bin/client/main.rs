@@ -676,6 +676,29 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
 
         ("tag", Some(sub_m)) => handle_tag_cmd(addr, sub_m),
 
+        ("settimeout", Some(sub_m)) => {
+            let jobs: Vec<_> = sub_m
+                .values_of("JID")
+                .unwrap()
+                .map(|s| str_to_jid(addr, s))
+                .collect();
+
+            let timeout = sub_m
+                .value_of("TIMEOUT")
+                .map(|s| s.parse().unwrap())
+                .unwrap();
+
+            for job in jobs.into_iter() {
+                let req = Ajtreq(protocol::AddJobTimeoutRequest {
+                    jid: job.jid(),
+                    timeout,
+                });
+
+                let response = make_request(addr, req);
+                pretty::print_response(response);
+            }
+        }
+
         _ => unreachable!(),
     }
 }

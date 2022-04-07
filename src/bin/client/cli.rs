@@ -330,6 +330,16 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                      "The tag ID of the tag.")
                 )
             )
+
+            (@subcommand settimeout =>
+                (about: "Set the timeout for a job")
+                (@setting ArgRequiredElseHelp)
+
+                (@arg TIMEOUT: +required {is_usize}
+                 "The maximum duration in minutes of the job before it fails.")
+                (@arg JID: +required {is_jid} ...
+                 "The job ID of the job for which to copy results.")
+            )
         )
     }).subcommand(build_machine_subcommand())
 }

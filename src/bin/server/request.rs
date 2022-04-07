@@ -953,6 +953,22 @@ impl Server {
                         Nstresp(protocol::NoSuchTagResp {})
                     }
                 }
+
+                Ajtreq(protocol::AddJobTimeoutRequest { jid, timeout }) => {
+                    match self.tasks.lock().unwrap().get_mut(&jid) {
+                        Some(task) => {
+                            let duration = Duration::minutes(timeout as i64);
+                            task.timeout = Some(duration);
+
+                            Okresp(protocol::OkResp {})
+                        }
+
+                        None => {
+                            error!("No such job or setup task: {}", jid);
+                            Nsjresp(protocol::NoSuchJobResp {})
+                        }
+                    }
+                }
             };
 
         Ok(response)

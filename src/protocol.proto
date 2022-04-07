@@ -23,6 +23,7 @@ message Request {
         TagJobRequest tjreq = 17;
         AddTagRequest atreq = 18;
         StatTagRequest streq = 19;
+        AddJobTimeoutRequest ajtreq = 20;
     }
 }
 
@@ -218,6 +219,14 @@ message AddTagRequest { }
 message StatTagRequest {
     // The ID of the tag.
     uint64 id = 1;
+}
+
+message AddJobTimeoutRequest {
+    // The ID of the job to update.
+    uint64 jid = 1;
+
+    // The number of minutes for a timeout.
+    uint64 timeout = 2;
 }
 
 message MatrixVarValues {
