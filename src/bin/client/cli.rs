@@ -205,6 +205,9 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
 
                 (@arg ONLY_DONE: --only_done
                  "Only included jobs that are completed successfully and have results.")
+
+                (@arg ALT_PATHS: --alt_paths +takes_value +multiple number_of_values(1)
+                 "Alternate paths where results files may be.")
             )
 
             (@subcommand hold =>

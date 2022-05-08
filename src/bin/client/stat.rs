@@ -125,7 +125,9 @@ impl From<JobInfo> for TextJobInfo {
 
 pub(crate) fn handle_stat_cmd(addr: &str, sub_m: &clap::ArgMatches<'_>) {
     // Identify and stat all jobs that are to be used.
-    let jobs = collect_jobs(addr, sub_m);
+    let mut jobs = collect_jobs(addr, sub_m);
+
+    fix_results_paths(&mut jobs, sub_m);
 
     // Pass the relevant columns to the given mappers.
     let jobs = map_jobs(sub_m, jobs);
@@ -196,6 +198,48 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
     jobs.dedup_by_key(|j| j.jid);
 
     jobs
+}
+
+/// For each job, check if the results path exists. If it does not, check if the path exists in one
+/// of the alternate paths passed on the command line.
+fn fix_results_paths(jobs: &mut [JobInfo], sub_m: &clap::ArgMatches) {
+    let alt_paths = if let Some(alt_paths) = sub_m.values_of("ALT_PATHS") {
+        alt_paths.map(PathBuf::from).collect::<Vec<_>>()
+    } else {
+        return;
+    };
+
+    for job in jobs.iter_mut() {
+        let results = match &job.status {
+            Status::Done {
+                output: Some(path), ..
+            } if !path.is_empty() => path,
+            _ => continue,
+        };
+        let fname = PathBuf::from(&results);
+        let fname = fname.file_name().expect("No filename.");
+        let results_path = {
+            let cp_results = PathBuf::from(&job.cp_results);
+            let path = cp_results.join(fname);
+            path.to_str().expect("Not a string").to_owned() + "*"
+        };
+
+        // If no file found, then start checking alt_paths...
+        if glob::glob(&results_path)
+            .map(|mut g| g.next().is_none())
+            .unwrap()
+        {
+            for alt_path in alt_paths.iter() {
+                if glob::glob(&(alt_path.join(&fname).to_str().unwrap().to_owned() + "*"))
+                    .map(|mut g| g.next().is_some())
+                    .unwrap()
+                {
+                    job.cp_results = alt_path.to_str().unwrap().to_owned();
+                    break;
+                }
+            }
+        }
+    }
 }
 
 macro_rules! field_mapper {
