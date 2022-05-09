@@ -1,6 +1,6 @@
 //! Utilities for implementing the `job stat` subcommand for post-processing of jobs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -204,17 +204,30 @@ fn collect_jobs(addr: &str, sub_m: &clap::ArgMatches<'_>) -> Vec<JobInfo> {
 /// of the alternate paths passed on the command line.
 fn fix_results_paths(jobs: &mut [JobInfo], sub_m: &clap::ArgMatches) {
     let alt_paths = if let Some(alt_paths) = sub_m.values_of("ALT_PATHS") {
-        alt_paths.map(PathBuf::from).collect::<Vec<_>>()
+        alt_paths.map(PathBuf::from)
     } else {
         return;
     };
 
-    for job in jobs.iter_mut() {
+    // Compile a list of files in the alt_paths that we can refer to quickly without needing to
+    // query the file system repeatedly.
+    let alt_paths_lists = alt_paths
+        .map(|alt_path| {
+            let files = std::fs::read_dir(&alt_path)
+                .unwrap()
+                .map(|dir_entry| dir_entry.unwrap().path().to_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+
+            (alt_path, files)
+        })
+        .collect::<HashMap<_, _>>();
+
+    jobs.par_iter_mut().for_each(|job| {
         let results = match &job.status {
             Status::Done {
                 output: Some(path), ..
             } if !path.is_empty() => path,
-            _ => continue,
+            _ => return,
         };
         let fname = PathBuf::from(&results);
         let fname = fname.file_name().expect("No filename.");
@@ -223,23 +236,21 @@ fn fix_results_paths(jobs: &mut [JobInfo], sub_m: &clap::ArgMatches) {
             let path = cp_results.join(fname);
             path.to_str().expect("Not a string").to_owned() + "*"
         };
+        let fname = fname.to_str().unwrap();
 
         // If no file found, then start checking alt_paths...
         if glob::glob(&results_path)
             .map(|mut g| g.next().is_none())
             .unwrap()
         {
-            for alt_path in alt_paths.iter() {
-                if glob::glob(&(alt_path.join(&fname).to_str().unwrap().to_owned() + "*"))
-                    .map(|mut g| g.next().is_some())
-                    .unwrap()
-                {
+            for (alt_path, files_list) in alt_paths_lists.iter() {
+                if files_list.iter().any(|f| f.contains(fname)) {
                     job.cp_results = alt_path.to_str().unwrap().to_owned();
                     break;
                 }
             }
         }
-    }
+    });
 }
 
 macro_rules! field_mapper {
