@@ -228,22 +228,29 @@ impl Server {
             task.machine = Some(machine.clone());
             task.timestamp = Utc::now();
 
-            match Self::run_cmd(jid, task, &machine, runner, log_dir) {
+            let slack_msg = match Self::run_cmd(jid, task, &machine, runner, log_dir) {
                 Ok(job) => {
-                    info!("Running job {} on machine {}", jid, machine);
+                    let msg = format!("Running job {} on machine {}", jid, machine);
 
+                    info!("{}", &msg);
                     running_job_handles.insert(jid, job);
+
+                    msg
                 }
                 Err(err) => {
-                    error!("Unable to start job {}: {}", jid, err);
+                    let msg = format!("Unable to start job {}: {}", jid, err);
 
+                    error!("{}", &msg);
                     task.update_state(TaskState::Error {
                         error: format!("Unable to start job {}: {}", jid, err),
                         n: 0, // first cmd failed
                     });
                     task.done_timestamp = Some(Utc::now());
+
+                    msg
                 }
             };
+            task.send_notification(&slack_msg);
 
             true
         } else {

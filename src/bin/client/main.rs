@@ -518,6 +518,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                 .value_of("TAG")
                 .map(|s| s.parse().unwrap())
                 .map(|t| protocol::add_job_request::Tagidopt::Tag(t));
+            let notify = sub_m.is_present("NOTIFY");
 
             for _ in 0..nclones {
                 let req = Ajreq(protocol::AddJobRequest {
@@ -530,6 +531,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                     timeout,
                     maximum_failures,
                     tagidopt: tag.clone(),
+                    notify,
                 });
 
                 let response = make_request(addr, req);

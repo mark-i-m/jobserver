@@ -315,6 +315,7 @@ impl Server {
                                 None
                             },
                             timedout: None,
+                            notify: false,
                         },
                     );
                     self.live_tasks.lock().unwrap().insert(jid);
@@ -351,6 +352,7 @@ impl Server {
                     timeout,
                     maximum_failures,
                     tagidopt: Some(protocol::add_job_request::Tagidopt::Tag(tag)),
+                    notify,
                 }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -395,6 +397,7 @@ impl Server {
                                     None
                                 },
                                 timedout: None,
+                                notify,
                             },
                         );
                         tag.jids.insert(jid);
@@ -416,6 +419,7 @@ impl Server {
                     timeout,
                     maximum_failures,
                     tagidopt: None,
+                    notify,
                 }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -455,6 +459,7 @@ impl Server {
                                 None
                             },
                             timedout: None,
+                            notify,
                         },
                     );
                     self.live_tasks.lock().unwrap().insert(jid);
@@ -845,6 +850,7 @@ impl Server {
                                     timestamp: Utc::now(),
                                     done_timestamp: None,
                                     timedout: None,
+                                    notify: false,
                                 },
                             );
                             self.live_tasks.lock().unwrap().insert(jid);

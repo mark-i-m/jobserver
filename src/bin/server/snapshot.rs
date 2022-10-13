@@ -81,6 +81,7 @@ mod serialize {
                     .timeout
                     .map(|mins| chrono::Duration::minutes(mins as i64)),
                 timedout: self.timedout.map(|t| t as usize),
+                notify: self.notify.unwrap_or(false),
             }
         }
     }
@@ -168,6 +169,7 @@ mod serialize {
                 done_timestamp: task.done_timestamp.map(serialize_ts),
                 timeout: task.timeout.map(|timeout| timeout.num_minutes() as u64),
                 timedout: task.timedout.map(|t| t as u64),
+                notify: Some(task.notify),
             };
 
             trace!("Serialize: {:?}", st);

@@ -201,6 +201,9 @@ struct Task {
     /// Indicates that a timeout occurred; the usize indicates the index of the cmd that timed
     /// out.
     timedout: Option<usize>,
+
+    /// Indicates whether or not to send a Slack notification on state changes
+    notify: bool,
 }
 
 /// A collection of jobs that run over the cartesian product of some set of variables.
@@ -275,6 +278,31 @@ impl Task {
             self.jid, self.state, new
         );
         self.state = new;
+    }
+
+    pub fn send_notification(&self, msg: &str) {
+        if !self.notify {
+            return;
+        }
+
+        if let Some(url) = self.variables.get("SLACK_API") {
+            let msg = self.variables.get("SLACK_USER").map_or(
+                msg.to_string(),
+                |u| format!("<@{u}>: {msg}")
+            );
+
+            let params = [("text", msg.clone())];
+            let client = reqwest::blocking::Client::new();
+            let res = client.post(url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .json(&params)
+                .send();
+
+            match res {
+                Err(_) => error!("Failed to send message \"{msg}\" to Slack"),
+                _ => {}
+            }
+        }
     }
 }
 
@@ -483,6 +511,7 @@ impl Server {
                 done_timestamp: _,
                 timedout: _,
                 attempt: _,
+                notify,
             } => {
                 info!("Cloning job {} to job {}, {:?}", jid, new_jid, task);
 
@@ -510,6 +539,7 @@ impl Server {
                     done_timestamp: None,
                     timeout: *timeout,
                     timedout: None,
+                    notify: *notify,
                 }
             }
 
@@ -532,6 +562,7 @@ impl Server {
                 timestamp: _,
                 done_timestamp: _,
                 timedout: _,
+                notify,
             } => {
                 info!(
                     "Cloning setup task {} to setup task {}, {:?}",
@@ -563,6 +594,7 @@ impl Server {
                     done_timestamp: None,
                     timeout: *timeout,
                     timedout: None,
+                    notify: *notify,
                 }
             }
 

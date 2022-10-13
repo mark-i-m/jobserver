@@ -109,6 +109,9 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                  "(optional) the number of failures before the server stops retrying.")
                 (@arg TAG: --tag +takes_value {is_usize}
                  "(optional) the id of the tag to apply.")
+                (@arg NOTIFY: --notify
+                 "(optional) Set to send slack messages about job status. \
+                  Requires {SLACK_API} to be set. Requires {SLACK_USER} to be set to be @ed.")
             )
 
             (@subcommand ls =>

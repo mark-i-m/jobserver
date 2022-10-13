@@ -130,6 +130,9 @@ message AddJobRequest {
     oneof tagidopt {
         uint64 tag = 7;
     }
+
+    // Whether or not to have the jobserver send slack notifications about job status
+    bool notify = 8;
 }
 
 // Get a list of job IDs.
