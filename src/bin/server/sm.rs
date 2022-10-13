@@ -232,7 +232,7 @@ impl Server {
                 Ok(job) => {
                     let msg = format!("Running job {} on machine {}", jid, machine);
 
-                    info!("{}", &msg);
+                    info!("{msg}");
                     running_job_handles.insert(jid, job);
 
                     msg
@@ -240,7 +240,7 @@ impl Server {
                 Err(err) => {
                     let msg = format!("Unable to start job {}: {}", jid, err);
 
-                    error!("{}", &msg);
+                    error!("{msg}");
                     task.update_state(TaskState::Error {
                         error: format!("Unable to start job {}: {}", jid, err),
                         n: 0, // first cmd failed

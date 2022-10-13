@@ -289,20 +289,27 @@ impl Task {
             let msg = self
                 .variables
                 .get("SLACK_USER")
-                .map_or(msg.to_string(), |u| format!("<@{u}>: {msg}"));
+                .map(|u| format!("<@{u}>: {msg}"))
+                .unwrap_or(msg.to_string());
 
-            let params = [("text", msg.clone())];
             let client = reqwest::blocking::Client::new();
-            let res = client
-                .post(url)
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .json(&params)
-                .send();
-
-            match res {
-                Err(_) => error!("Failed to send message \"{msg}\" to Slack"),
-                _ => {}
+            let mut params = BTreeMap::new();
+            params.insert("text", msg.as_str());
+            let req = client.post(url).json(&params);
+            info!("Notify task {}: {req:?}", self.jid);
+            match req.send() {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("Notified Slack.")
+                }
+                Ok(resp) => {
+                    error!("Failed to send message {msg:?} to Slack: {resp:?}");
+                }
+                Err(err) => {
+                    error!("Failed to send message {msg:?} to Slack: {err}");
+                }
             }
+        } else {
+            error!("Cannot send Slack notification with SLACK_API url.");
         }
     }
 }
