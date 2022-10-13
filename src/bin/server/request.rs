@@ -712,16 +712,12 @@ impl Server {
 
                     match task {
                         Some(
-                            task
-                            @
-                            Task {
+                            task @ Task {
                                 ty: TaskType::Job, ..
                             },
                         )
                         | Some(
-                            task
-                            @
-                            Task {
+                            task @ Task {
                                 ty: TaskType::SetupTask,
                                 cp_results: None,
                                 repeat_on_fail: false,

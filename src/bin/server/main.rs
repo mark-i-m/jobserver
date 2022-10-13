@@ -286,14 +286,15 @@ impl Task {
         }
 
         if let Some(url) = self.variables.get("SLACK_API") {
-            let msg = self.variables.get("SLACK_USER").map_or(
-                msg.to_string(),
-                |u| format!("<@{u}>: {msg}")
-            );
+            let msg = self
+                .variables
+                .get("SLACK_USER")
+                .map_or(msg.to_string(), |u| format!("<@{u}>: {msg}"));
 
             let params = [("text", msg.clone())];
             let client = reqwest::blocking::Client::new();
-            let res = client.post(url)
+            let res = client
+                .post(url)
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .json(&params)
                 .send();
