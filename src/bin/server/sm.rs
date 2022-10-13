@@ -330,10 +330,7 @@ impl Server {
                 } else {
                     let msg = format!("Command {} failed: {}", idx, status);
                     task.send_notification(&msg);
-                    task.update_state(TaskState::Error {
-                        error: msg,
-                        n: idx,
-                    });
+                    task.update_state(TaskState::Error { error: msg, n: idx });
                     task.done_timestamp = Some(Utc::now());
                 }
 
