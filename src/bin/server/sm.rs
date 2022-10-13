@@ -290,7 +290,10 @@ impl Server {
                     // If this is the last command of the task, then we are done.
                     // Otherwise, start the next command.
                     if idx == task.cmds.len() - 1 {
-                        info!("Task {} is complete. Need to check for results.", jid);
+                        let msg = format!("Task {} is complete. Need to check for results.", jid);
+                        info!("{msg}");
+
+                        task.send_notification(&msg);
                         task.update_state(TaskState::CheckingResults);
                     } else {
                         // Move to the next task and then attempt to run it.
@@ -325,8 +328,10 @@ impl Server {
                         };
                     }
                 } else {
+                    let msg = format!("Command {} failed: {}", idx, status);
+                    task.send_notification(&msg);
                     task.update_state(TaskState::Error {
-                        error: format!("Command {} failed: {}", idx, status),
+                        error: msg,
                         n: idx,
                     });
                     task.done_timestamp = Some(Utc::now());
@@ -343,7 +348,9 @@ impl Server {
                     .timeout
                     .map_or(false, |timeout| Utc::now() - task.timestamp >= timeout)
                 {
-                    info!("Task {} timedout. Cancelling.", jid);
+                    let msg = format!("Task {} timedout. Cancelling.", jid);
+                    info!("{msg}");
+                    task.send_notification(&msg);
                     task.timedout = Some(idx);
                     task.canceled = Some(false); // don't forget, just cancel.
 
@@ -400,7 +407,7 @@ impl Server {
         };
 
         // If there is such a path, then spawn a thread to copy the file to this machine
-        match (&task.cp_results, &results_path) {
+        let msg = match (&task.cp_results, &results_path) {
             (Some(cp_results), Some(results_path)) => {
                 let machine = task.machine.as_ref().unwrap().clone();
 
@@ -418,28 +425,44 @@ impl Server {
                 task.update_state(TaskState::CopyingResults {
                     results_path: results_path.clone(),
                 });
+
+                let msg = format!("Task {} results copied", jid);
+                Some(msg)
             }
 
             (Some(_), None) => {
-                warn!("Task {} expected results, but none were produced.", jid);
+                let msg = format!("Task {} expected results, but none were produced.", jid);
 
+                warn!("{msg}");
                 task.update_state(TaskState::Finalize { results_path: None });
+
+                Some(msg)
             }
 
             (None, Some(_)) => {
-                warn!(
+                let msg = format!(
                     "Discarding results for task {} even though they were produced.",
                     jid
                 );
 
+                warn!("{msg}");
                 task.update_state(TaskState::Finalize { results_path: None });
+
+                Some(msg)
             }
 
             (None, None) => {
-                info!("Task {} completed without results.", jid);
+                let msg = format!("Task {} completed without results.", jid);
 
+                info!("{msg}");
                 task.update_state(TaskState::Finalize { results_path: None });
+
+                Some(msg)
             }
+        };
+
+        if let Some(msg) = msg {
+            task.send_notification(&msg);
         }
 
         true
