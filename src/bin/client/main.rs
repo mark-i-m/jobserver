@@ -339,6 +339,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(0);
             let stagger = sub_m.value_of("STAGGER").map(|s| s.parse().unwrap());
+            let notify = sub_m.is_present("NOTIFY");
 
             for machine in machines.into_iter() {
                 let req = Sumreq(protocol::SetUpMachineRequest {
@@ -346,6 +347,7 @@ fn handle_machine_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     cmds: cmds.clone(),
                     classopt: class.clone(),
                     timeout,
+                    notify,
                 });
 
                 let response = make_request(addr, req);

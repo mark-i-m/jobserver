@@ -278,6 +278,7 @@ impl Server {
                     classopt,
                     cmds,
                     timeout,
+                    notify,
                 }) => {
                     let jid = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -315,7 +316,7 @@ impl Server {
                                 None
                             },
                             timedout: None,
-                            notify: false,
+                            notify,
                         },
                     );
                     self.live_tasks.lock().unwrap().insert(jid);

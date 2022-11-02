@@ -89,6 +89,9 @@ message SetUpMachineRequest {
     // run however long it does). The timeout is taken as the total duration of
     // all commands in the task, not each individual command.
     uint64 timeout = 5;
+
+    // Whether or not to have the jobserver send slack notifications about job status
+    bool notify = 6;
 }
 
 // Set the value of a variable.

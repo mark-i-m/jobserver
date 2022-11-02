@@ -509,6 +509,15 @@ fn build_machine_subcommand() -> clap::App<'static, 'static> {
                             seconds. This can be useful if all setup tasks need to fetch a resource \
                             from the internet to avoid DOS-ing that resource.",
                         ),
+                )
+                .arg(
+                    Arg::with_name("NOTIFY")
+                        .long("notify")
+                        .takes_value(false)
+                        .help(
+                            "If passed, messages will be sent to slack about job status. \
+                            Requires {SLACK_API} to be set. Requires {SLACK_USER} to be set to be @ed."
+                        ),
                 ),
         )
 }
