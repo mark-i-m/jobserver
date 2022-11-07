@@ -286,6 +286,9 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                       the job killed.")
                     (@arg MAX_FAILURES: --max_failures +takes_value
                      "(optional) the number of failures before the server stops retrying.")
+                    (@arg NOTIFY: --notify
+                     "(optional) Set to send slack messages about job status. \
+                      Requires {SLACK_API} to be set. Requires {SLACK_USER} to be set to be @ed.")
                 )
 
                 (@subcommand ls =>

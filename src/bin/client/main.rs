@@ -809,6 +809,7 @@ fn handle_matrix_cmd(addr: &str, matches: &clap::ArgMatches<'_>) {
                     .value_of("MAX_FAILURES")
                     .map(|s| s.parse().unwrap())
                     .unwrap_or(-1),
+                notify: sub_m.is_present("NOTIFY"),
             });
 
             let response = make_request(addr, req);
