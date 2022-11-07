@@ -779,6 +779,7 @@ impl Server {
                     repeat,
                     timeout,
                     maximum_failures,
+                    notify,
                 }) => {
                     let id = self.next_jid.fetch_add(1, Ordering::Relaxed);
 
@@ -847,7 +848,7 @@ impl Server {
                                     timestamp: Utc::now(),
                                     done_timestamp: None,
                                     timedout: None,
-                                    notify: false,
+                                    notify,
                                 },
                             );
                             self.live_tasks.lock().unwrap().insert(jid);
