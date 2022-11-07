@@ -26,6 +26,17 @@ mod snapshot;
 /// The name of the file in the `log_dir` that a snapshot is stored at.
 const DUMP_FILENAME: &str = "server-snapshot";
 
+/// Various visual status indicators for Slack notifications.
+enum SlackVisualStatus {
+    Success,
+    SuccessNice,
+    Running,
+    Pending,
+    Error,
+    Warning,
+    Timeout,
+}
+
 /// The server's state.
 #[derive(Debug)]
 struct Server {
@@ -280,16 +291,26 @@ impl Task {
         self.state = new;
     }
 
-    pub fn send_notification(&self, msg: &str) {
+    pub fn send_notification(&self, svs: SlackVisualStatus, msg: &str) {
         if !self.notify {
             return;
         }
 
         if let Some(url) = self.variables.get("SLACK_API") {
+            let indicator = match svs {
+                SlackVisualStatus::Pending => ":hourglass_flowing_sand:",
+                SlackVisualStatus::Running => ":running:",
+                SlackVisualStatus::SuccessNice => ":tada:",
+                SlackVisualStatus::Success => ":large_green_circle:",
+                SlackVisualStatus::Warning => ":warning:",
+                SlackVisualStatus::Error => ":x:",
+                SlackVisualStatus::Timeout => ":alarm_clock: :boom:",
+            };
+
             let msg = self
                 .variables
                 .get("SLACK_USER")
-                .map(|u| format!("<@{u}>: {msg}"))
+                .map(|u| format!("<@{u}>: {indicator} {msg}"))
                 .unwrap_or(msg.to_string());
 
             let client = reqwest::blocking::Client::new();

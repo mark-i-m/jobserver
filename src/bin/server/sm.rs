@@ -13,6 +13,8 @@ use expjobserver::{cmd_replace_machine, cmd_replace_vars, cmd_to_path, human_ts}
 
 use log::{debug, error, info, warn};
 
+use crate::SlackVisualStatus;
+
 use super::{
     copier::{copy, CopierThreadQueue, CopierThreadResult, CopyJobInfo},
     JobProcessInfo, MachineStatus, Server, Task, TaskState, TaskType,
@@ -228,14 +230,14 @@ impl Server {
             task.machine = Some(machine.clone());
             task.timestamp = Utc::now();
 
-            let slack_msg = match Self::run_cmd(jid, task, &machine, runner, log_dir) {
+            let (slack_msg, slack_svs) = match Self::run_cmd(jid, task, &machine, runner, log_dir) {
                 Ok(job) => {
                     let msg = format!("Running job {} on machine {}", jid, machine);
 
                     info!("{msg}");
                     running_job_handles.insert(jid, job);
 
-                    msg
+                    (msg, SlackVisualStatus::Running)
                 }
                 Err(err) => {
                     let msg = format!("Unable to start job {}: {}", jid, err);
@@ -247,10 +249,10 @@ impl Server {
                     });
                     task.done_timestamp = Some(Utc::now());
 
-                    msg
+                    (msg, SlackVisualStatus::Error)
                 }
             };
-            task.send_notification(&slack_msg);
+            task.send_notification(slack_svs, &slack_msg);
 
             true
         } else {
@@ -293,7 +295,7 @@ impl Server {
                         let msg = format!("Task {} is complete. Need to check for results.", jid);
                         info!("{msg}");
 
-                        task.send_notification(&msg);
+                        task.send_notification(SlackVisualStatus::Pending, &msg);
                         task.update_state(TaskState::CheckingResults);
                     } else {
                         // Move to the next task and then attempt to run it.
@@ -329,7 +331,7 @@ impl Server {
                     }
                 } else {
                     let msg = format!("Command {} failed: {}", idx, status);
-                    task.send_notification(&msg);
+                    task.send_notification(SlackVisualStatus::Error, &msg);
                     task.update_state(TaskState::Error { error: msg, n: idx });
                     task.done_timestamp = Some(Utc::now());
                 }
@@ -347,7 +349,7 @@ impl Server {
                 {
                     let msg = format!("Task {} timedout. Cancelling.", jid);
                     info!("{msg}");
-                    task.send_notification(&msg);
+                    task.send_notification(SlackVisualStatus::Timeout, &msg);
                     task.timedout = Some(idx);
                     task.canceled = Some(false); // don't forget, just cancel.
 
@@ -404,7 +406,7 @@ impl Server {
         };
 
         // If there is such a path, then spawn a thread to copy the file to this machine
-        let msg = match (&task.cp_results, &results_path) {
+        let slack = match (&task.cp_results, &results_path) {
             (Some(cp_results), Some(results_path)) => {
                 let machine = task.machine.as_ref().unwrap().clone();
 
@@ -424,7 +426,7 @@ impl Server {
                 });
 
                 let msg = format!("Task {} results copied", jid);
-                Some(msg)
+                Some((SlackVisualStatus::SuccessNice, msg))
             }
 
             (Some(_), None) => {
@@ -433,7 +435,7 @@ impl Server {
                 warn!("{msg}");
                 task.update_state(TaskState::Finalize { results_path: None });
 
-                Some(msg)
+                Some((SlackVisualStatus::Warning, msg))
             }
 
             (None, Some(_)) => {
@@ -445,7 +447,7 @@ impl Server {
                 warn!("{msg}");
                 task.update_state(TaskState::Finalize { results_path: None });
 
-                Some(msg)
+                Some((SlackVisualStatus::Warning, msg))
             }
 
             (None, None) => {
@@ -454,12 +456,12 @@ impl Server {
                 info!("{msg}");
                 task.update_state(TaskState::Finalize { results_path: None });
 
-                Some(msg)
+                Some((SlackVisualStatus::Success, msg))
             }
         };
 
-        if let Some(msg) = msg {
-            task.send_notification(&msg);
+        if let Some((svs, msg)) = slack {
+            task.send_notification(svs, &msg);
         }
 
         true
