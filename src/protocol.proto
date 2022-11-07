@@ -205,7 +205,7 @@ message AddMatrixRequest {
     int64 maximum_failures = 7;
 
     // Whether or not to have the jobserver send slack notifications about job status
-    bool notify = 6;
+    bool notify = 8;
 }
 
 message StatMatrixRequest {
