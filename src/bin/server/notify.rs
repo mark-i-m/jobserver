@@ -102,6 +102,11 @@ impl SlackNotifications {
             | TaskState::Killed
             | TaskState::Canceled { .. } => false, // false just to match the other arms' types...
         };
+
+        // We want summaries to include immediately notified events too (it would be weird
+        // otherwise), so add them together...
+        self.enqueued_summarize
+            .extend(self.enqueued_immediate.iter().cloned());
     }
     pub(crate) fn enqueue_machine_notification(&mut self, machine: &str) {
         use NotificationSetting::*;
@@ -166,215 +171,228 @@ impl Server {
             let mut summary = BTreeSet::new();
             std::mem::swap(&mut summary, &mut locked_notif.enqueued_summarize);
 
-            // Collect lists of all summary elements...
-            let mut running_tasks = Vec::new();
-            let mut check_res_tasks = Vec::new();
-            let mut copy_res_tasks = Vec::new();
-            let mut done_no_res_tasks = Vec::new();
-            let mut done_res_tasks = Vec::new();
+            if !summary.is_empty() {
+                // Collect lists of all summary elements...
+                let mut running_tasks = Vec::new();
+                let mut check_res_tasks = Vec::new();
+                let mut copy_res_tasks = Vec::new();
+                let mut done_no_res_tasks = Vec::new();
+                let mut done_res_tasks = Vec::new();
 
-            let mut matrices = Vec::new();
+                let mut matrices = Vec::new();
 
-            let mut done_exp_res_tasks = Vec::new();
-            let mut error_tasks = Vec::new();
-            let mut timeout_tasks = Vec::new();
-            let mut broken_machines = Vec::new();
+                let mut done_exp_res_tasks = Vec::new();
+                let mut error_tasks = Vec::new();
+                let mut timeout_tasks = Vec::new();
+                let mut broken_machines = Vec::new();
 
-            for n in summary.into_iter() {
-                match n {
-                    Notification::MachineEvent { machine } => {
-                        broken_machines.push(machine);
+                for n in summary.into_iter() {
+                    match n {
+                        Notification::MachineEvent { machine } => {
+                            broken_machines.push(machine);
+                        }
+                        Notification::TaskEvent { jid } => {
+                            if let Some(task) = locked_tasks.get(&jid) {
+                                match &task.state {
+                                    TaskState::Running { .. } => {
+                                        running_tasks.push(jid);
+                                    }
+                                    TaskState::CheckingResults => {
+                                        check_res_tasks.push(jid);
+                                    }
+                                    TaskState::CopyingResults { .. } => {
+                                        copy_res_tasks.push(jid);
+                                    }
+                                    TaskState::Done
+                                    | TaskState::Finalize { results_path: None }
+                                        if matches!(task.cp_results, None) =>
+                                    {
+                                        done_no_res_tasks.push(jid);
+                                    }
+                                    TaskState::Done
+                                    | TaskState::Finalize { results_path: None } => {
+                                        done_exp_res_tasks.push(jid);
+                                    }
+                                    TaskState::Finalize {
+                                        results_path: Some(..),
+                                    }
+                                    | TaskState::DoneWithResults { .. } => {
+                                        done_res_tasks.push(jid);
+                                    }
+
+                                    TaskState::Error { .. } | TaskState::ErrorDone { .. }
+                                        if task.timedout.is_some() =>
+                                    {
+                                        timeout_tasks.push(jid);
+                                    }
+                                    TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
+                                        error_tasks.push(jid);
+                                    }
+
+                                    _ => {}
+                                }
+
+                                if let Some(matrix) = task.matrix {
+                                    matrices.push(matrix);
+                                }
+                            }
+                        }
                     }
-                    Notification::TaskEvent { jid } => {
-                        if let Some(task) = locked_tasks.get(&jid) {
-                            match &task.state {
-                                TaskState::Running { .. } => {
-                                    running_tasks.push(jid);
-                                }
-                                TaskState::CheckingResults => {
-                                    check_res_tasks.push(jid);
-                                }
-                                TaskState::CopyingResults { .. } => {
-                                    copy_res_tasks.push(jid);
-                                }
-                                TaskState::Done | TaskState::Finalize { results_path: None }
-                                    if matches!(task.cp_results, None) =>
-                                {
-                                    done_no_res_tasks.push(jid);
-                                }
-                                TaskState::Done | TaskState::Finalize { results_path: None } => {
-                                    done_exp_res_tasks.push(jid);
-                                }
-                                TaskState::Finalize {
-                                    results_path: Some(..),
-                                }
-                                | TaskState::DoneWithResults { .. } => {
-                                    done_res_tasks.push(jid);
-                                }
+                }
 
-                                TaskState::Error { .. } | TaskState::ErrorDone { .. }
-                                    if task.timedout.is_some() =>
-                                {
-                                    timeout_tasks.push(jid);
-                                }
-                                TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
-                                    error_tasks.push(jid);
-                                }
+                let mut msg = String::new();
 
-                                _ => {}
+                if let Some(user) = slack_user {
+                    msg.push_str(&format!("<@{user}> "));
+                }
+
+                msg.push_str("*Summary*\n\n");
+
+                fn list_jids(out: &mut String, jids: Vec<u64>) {
+                    for jid in jids.into_iter() {
+                        out.push_str(&format!(" {jid}"));
+                    }
+                }
+
+                // (done, waiting, running, failed)
+                fn matrix_status(
+                    locked_tasks: &BTreeMap<u64, Task>,
+                    matrix: &Matrix,
+                ) -> (usize, usize, usize, usize) {
+                    let mut done = 0;
+                    let mut waiting = 0;
+                    let mut running = 0;
+                    let mut failed = 0;
+
+                    for jid in matrix.jids.iter() {
+                        let Some(task) = locked_tasks.get(&jid)  else {continue};
+
+                        match &task.state {
+                            TaskState::Waiting => {
+                                waiting += 1;
                             }
 
-                            if let Some(matrix) = task.matrix {
-                                matrices.push(matrix);
+                            TaskState::Running { .. }
+                            | TaskState::CheckingResults
+                            | TaskState::CopyingResults { .. } => {
+                                running += 1;
                             }
+
+                            TaskState::Finalize { .. }
+                            | TaskState::Done
+                            | TaskState::DoneWithResults { .. } => {
+                                done += 1;
+                            }
+
+                            TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
+                                failed += 1;
+                            }
+
+                            _ => {}
                         }
                     }
-                }
-            }
 
-            let mut msg = "**Summary**\n".to_owned();
-
-            fn list_jids(out: &mut String, jids: Vec<u64>) {
-                for jid in jids.into_iter() {
-                    out.push_str(&format!(" {jid}"));
-                }
-            }
-
-            // (done, waiting, running, failed)
-            fn matrix_status(
-                locked_tasks: &BTreeMap<u64, Task>,
-                matrix: &Matrix,
-            ) -> (usize, usize, usize, usize) {
-                let mut done = 0;
-                let mut waiting = 0;
-                let mut running = 0;
-                let mut failed = 0;
-
-                for jid in matrix.jids.iter() {
-                    let Some(task) = locked_tasks.get(&jid)  else {continue};
-
-                    match &task.state {
-                        TaskState::Waiting => {
-                            waiting += 1;
-                        }
-
-                        TaskState::Running { .. }
-                        | TaskState::CheckingResults
-                        | TaskState::CopyingResults { .. } => {
-                            running += 1;
-                        }
-
-                        TaskState::Finalize { .. }
-                        | TaskState::Done
-                        | TaskState::DoneWithResults { .. } => {
-                            done += 1;
-                        }
-
-                        TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
-                            failed += 1;
-                        }
-
-                        _ => {}
-                    }
+                    (done, waiting, running, failed)
                 }
 
-                (done, waiting, running, failed)
-            }
+                if running_tasks.is_empty() {
+                    msg.push_str("    • :running: No new tasks running.\n");
+                } else {
+                    msg.push_str("    • :running: Started running:");
+                    list_jids(&mut msg, running_tasks);
+                    msg.push_str("\n")
+                }
 
-            if running_tasks.is_empty() {
-                msg.push_str("* :running: No new tasks running.\n");
-            } else {
-                msg.push_str("* :running: Started running:");
-                list_jids(&mut msg, running_tasks);
-                msg.push_str("\n")
-            }
+                if check_res_tasks.is_empty() {
+                    msg.push_str(
+                        "    • :hourglass_flowing_sand: No new tasks checking for results.\n",
+                    );
+                } else {
+                    msg.push_str("    • :hourglass_flowing_sand: Completed, checking for results:");
+                    list_jids(&mut msg, check_res_tasks);
+                    msg.push_str("\n")
+                }
 
-            if check_res_tasks.is_empty() {
-                msg.push_str("* :hourglass_flowing_sand: No new tasks checking for results.\n");
-            } else {
-                msg.push_str("* :hourglass_flowing_sand: Completed, checking for results:");
-                list_jids(&mut msg, check_res_tasks);
-                msg.push_str("\n")
-            }
+                if copy_res_tasks.is_empty() {
+                    msg.push_str("    • :hourglass_flowing_sand: No new tasks copying results.\n");
+                } else {
+                    msg.push_str("    • :hourglass_flowing_sand: Completed, copying results:");
+                    list_jids(&mut msg, copy_res_tasks);
+                    msg.push_str("\n")
+                }
 
-            if copy_res_tasks.is_empty() {
-                msg.push_str("* :hourglass_flowing_sand: No new tasks copying results.\n");
-            } else {
-                msg.push_str("* :hourglass_flowing_sand: Completed, copying results:");
-                list_jids(&mut msg, copy_res_tasks);
-                msg.push_str("\n")
-            }
+                if done_no_res_tasks.is_empty() {
+                    msg.push_str(
+                        "    • :large_green_circle: No new tasks completed without results.\n",
+                    );
+                } else {
+                    msg.push_str("    • :large_green_circle: Completed without results:");
+                    list_jids(&mut msg, done_no_res_tasks);
+                    msg.push_str("\n")
+                }
 
-            if done_no_res_tasks.is_empty() {
-                msg.push_str("* :large_green_circle: No new tasks completed without results.\n");
-            } else {
-                msg.push_str("* :large_green_circle: Completed without results:");
-                list_jids(&mut msg, done_no_res_tasks);
-                msg.push_str("\n")
-            }
+                if done_res_tasks.is_empty() {
+                    msg.push_str("    • :tada: No new tasks completed with results.\n");
+                } else {
+                    msg.push_str("    • :tada: Completed with results:");
+                    list_jids(&mut msg, done_res_tasks);
+                    msg.push_str("\n")
+                }
 
-            if done_res_tasks.is_empty() {
-                msg.push_str("* :tada: No new tasks completed with results.\n");
-            } else {
-                msg.push_str("* :tada: Completed with results:");
-                list_jids(&mut msg, done_res_tasks);
-                msg.push_str("\n")
-            }
+                if !matrices.is_empty() {
+                    msg.push_str("\n*Matrices*\n");
 
-            if !matrices.is_empty() {
-                msg.push_str("\n**Matrices**\n");
-
-                for matrix in matrices {
-                    let Some(matrix) = locked_matrices.get(&matrix) else {continue;};
-                    let (done, waiting, running, failed) = matrix_status(&*locked_tasks, matrix);
-                    msg.push_str(&format!(
-                        "* Matrix {}: {waiting} waiting, \
+                    for matrix in matrices {
+                        let Some(matrix) = locked_matrices.get(&matrix) else {continue;};
+                        let (done, waiting, running, failed) =
+                            matrix_status(&*locked_tasks, matrix);
+                        msg.push_str(&format!(
+                            "    • Matrix {}: {waiting} waiting, \
                          {running} running, {done} done, {failed} failed.\n",
-                        matrix.id
-                    ));
+                            matrix.id
+                        ));
+                    }
                 }
-            }
 
-            msg.push_str("\n**Warnings and Errors**\n");
+                msg.push_str("\n*Warnings and Errors*\n");
 
-            if done_exp_res_tasks.is_empty() {
-                msg.push_str("* :warning: No new tasks expected results but didn't produce any.\n");
-            } else {
-                msg.push_str("* :warning: Completed without expected results:");
-                list_jids(&mut msg, done_exp_res_tasks);
-                msg.push_str("\n")
-            }
-
-            if timeout_tasks.is_empty() {
-                msg.push_str("* :alarm_clock: :boom: No tasks timed out.\n");
-            } else {
-                msg.push_str("* :alarm_clock: :boom: Timed out:");
-                list_jids(&mut msg, timeout_tasks);
-                msg.push_str("\n")
-            }
-
-            if error_tasks.is_empty() {
-                msg.push_str("* :x: No tasks failed.\n");
-            } else {
-                msg.push_str("* :x: Failed:");
-                list_jids(&mut msg, error_tasks);
-                msg.push_str("\n")
-            }
-
-            if broken_machines.is_empty() {
-                msg.push_str("* :computer: :boom: No machines marked as broken.\n");
-            } else {
-                msg.push_str("* :computer: :boom: Machines marked as broken:\n");
-                for machine in broken_machines.into_iter() {
-                    msg.push_str(&format!("  * {machine}\n"));
+                if done_exp_res_tasks.is_empty() {
+                    msg.push_str(
+                        "    • :warning: No new tasks expected results but didn't produce any.\n",
+                    );
+                } else {
+                    msg.push_str("    • :warning: Completed without expected results:");
+                    list_jids(&mut msg, done_exp_res_tasks);
+                    msg.push_str("\n")
                 }
-            }
 
-            if let Some(user) = slack_user {
-                msg.push_str(&format!("\n\n<@{user}>"));
-            }
+                if timeout_tasks.is_empty() {
+                    msg.push_str("    • :alarm_clock: No tasks timed out.\n");
+                } else {
+                    msg.push_str("    • :alarm_clock: Timed out:");
+                    list_jids(&mut msg, timeout_tasks);
+                    msg.push_str("\n")
+                }
 
-            send_slack_notification(slack_api, &msg);
+                if error_tasks.is_empty() {
+                    msg.push_str("    • :x: No tasks failed.\n");
+                } else {
+                    msg.push_str("    • :x: Failed:");
+                    list_jids(&mut msg, error_tasks);
+                    msg.push_str("\n")
+                }
+
+                if broken_machines.is_empty() {
+                    msg.push_str("    • :boom: No machines marked as broken.\n");
+                } else {
+                    msg.push_str("    • :boom: Machines marked as broken:\n");
+                    for machine in broken_machines.into_iter() {
+                        msg.push_str(&format!("      • {machine}\n"));
+                    }
+                }
+
+                send_slack_notification(slack_api, &msg);
+            }
 
             locked_notif.last_summary = Instant::now();
         }
@@ -388,7 +406,7 @@ impl Server {
         ms: &MachineStatus,
     ) {
         let msg = format!(
-            ":warning: Machine {machine} marked as broken after {} failures.",
+            ":warning: Machine broken: {machine} ({} failures).",
             ms.failures
         );
         let msg = slack_user
@@ -467,11 +485,9 @@ impl Task {
 fn send_slack_notification(slack_api: &str, msg: &str) {
     let client = reqwest::blocking::Client::new();
     let mut params = BTreeMap::new();
-    let msg = format!(
-        r#"{{ "blocks": [ {{ "type": "section", "text": \
-           {{ "type": "mrkdwn", "text": "{msg}" }} }} ] }}"#
-    );
-    params.insert("text", &msg);
+    let msg =
+        format!(r#"[ {{ "type": "section", "text": {{ "type": "mrkdwn", "text": "{msg}" }} }} ]"#);
+    params.insert("blocks", &msg);
     let req = client.post(slack_api).json(&params);
     info!("Notify: {req:?}");
     match req.send() {
