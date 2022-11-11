@@ -16,26 +16,19 @@ use expjobserver::SERVER_ADDR;
 
 use log::{debug, error, info};
 
+use notify::SlackNotifications;
 use prost::Message;
 
+use crate::notify::{NotificationSetting, NotificationsSettings};
+
 mod copier;
+mod notify;
 mod request;
 mod sm;
 mod snapshot;
 
 /// The name of the file in the `log_dir` that a snapshot is stored at.
 const DUMP_FILENAME: &str = "server-snapshot";
-
-/// Various visual status indicators for Slack notifications.
-enum SlackVisualStatus {
-    Success,
-    SuccessNice,
-    Running,
-    Pending,
-    Error,
-    Warning,
-    Timeout,
-}
 
 /// The server's state.
 #[derive(Debug)]
@@ -47,6 +40,7 @@ struct Server {
     // - live_tasks
     // - matrices
     // - tags
+    // - notifications
     /// Maps available machines to their classes.
     machines: Arc<Mutex<HashMap<String, MachineStatus>>>,
 
@@ -88,6 +82,9 @@ struct Server {
     /// Set to true when a client does something. This is mainly optimization to inform whether
     /// the worker thread might want to check for some work.
     client_ping: Arc<AtomicBool>,
+
+    /// Pending notifications and notification settings.
+    notifications: Arc<Mutex<SlackNotifications>>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,7 +108,7 @@ enum TaskState {
         index: usize,
     },
 
-    /// The task terminated with a successful error code, but we have not yet checked for results.
+    /// The task terminated with a successful exit code, but we have not yet checked for results.
     CheckingResults,
 
     /// The task completed and we are copying results.
@@ -282,62 +279,14 @@ struct JobProcessInfo {
     stderr: String,
 }
 
-impl Task {
-    pub fn update_state(&mut self, new: TaskState) {
-        info!(
-            "Task {} SM Update\nOLD: {:?}\nNEW: {:?}",
-            self.jid, self.state, new
-        );
-        self.state = new;
-    }
-
-    pub fn send_notification(&self, svs: SlackVisualStatus, msg: &str) {
-        if !self.notify {
-            return;
-        }
-
-        if let Some(url) = self.variables.get("SLACK_API") {
-            let indicator = match svs {
-                SlackVisualStatus::Pending => ":hourglass_flowing_sand:",
-                SlackVisualStatus::Running => ":running:",
-                SlackVisualStatus::SuccessNice => ":tada:",
-                SlackVisualStatus::Success => ":large_green_circle:",
-                SlackVisualStatus::Warning => ":warning:",
-                SlackVisualStatus::Error => ":x:",
-                SlackVisualStatus::Timeout => ":alarm_clock: :boom:",
-            };
-
-            let msg = self
-                .variables
-                .get("SLACK_USER")
-                .map(|u| format!("<@{u}>: {indicator} {msg}"))
-                .unwrap_or(msg.to_string());
-
-            let client = reqwest::blocking::Client::new();
-            let mut params = BTreeMap::new();
-            params.insert("text", msg.as_str());
-            let req = client.post(url).json(&params);
-            info!("Notify task {}: {req:?}", self.jid);
-            match req.send() {
-                Ok(resp) if resp.status().is_success() => {
-                    info!("Notified Slack.")
-                }
-                Ok(resp) => {
-                    error!("Failed to send message {msg:?} to Slack: {resp:?}");
-                }
-                Err(err) => {
-                    error!("Failed to send message {msg:?} to Slack: {err}");
-                }
-            }
-        } else {
-            error!("Cannot send Slack notification with SLACK_API url.");
-        }
-    }
-}
-
 impl Server {
     /// Creates a new server. Not listening yet.
-    pub fn new(runner: String, log_dir: String, allow_snap_fail: bool) -> Self {
+    pub fn new(
+        runner: String,
+        log_dir: String,
+        allow_snap_fail: bool,
+        notifications: SlackNotifications,
+    ) -> Self {
         let mut server = Self {
             machines: Arc::new(Mutex::new(HashMap::new())),
             variables: Arc::new(Mutex::new(HashMap::new())),
@@ -349,6 +298,7 @@ impl Server {
             runner,
             log_dir,
             client_ping: Arc::new(AtomicBool::new(false)),
+            notifications: Arc::new(Mutex::new(notifications)),
         };
 
         let is_loaded = server.load_snapshot();
@@ -405,6 +355,10 @@ impl Server {
             // Write out state for later (before we grab any locks).
             self.take_snapshot();
 
+            // Send slack notifications.
+            // NOTE: this needs to be called while we aren't holding locks...
+            self.process_notifications();
+
             // Sleep 30s, but keep waking up to check if there is likely more work. If there is an
             // indication of potential work, do a full iteration.
             for _ in 0..30000 / 100 {
@@ -426,6 +380,7 @@ impl Server {
                 let live_tasks_snapshot = locked_live_tasks.clone();
                 let mut locked_matrices = self.matrices.lock().unwrap();
                 let mut locked_tags = self.tags.lock().unwrap();
+                let mut locked_notif = self.notifications.lock().unwrap();
 
                 debug!("Machine stata: {:?}", *locked_machines);
 
@@ -444,6 +399,7 @@ impl Server {
                                 &mut to_clone,
                                 copying_flags.clone(),
                                 copy_thread_queue.clone(),
+                                &mut *locked_notif,
                             );
                     } else {
                         locked_live_tasks.remove(&jid);
@@ -648,6 +604,21 @@ fn main() {
         (@arg NOSNAP: --allow_snap_fail
          "Allow snapshot loading to fail. You will need this the first \
           time you run the server.")
+
+        // Slack notification settings.
+        (@arg NOTIF_SUMMARY_INT: --summary_interval +takes_value
+         "How many minutes between summary notifications. \
+          Defaults to 30 minutes.")
+        (@arg NOTIF_RUNNING: --notify_running
+         "Notify immediately when a task starts running.")
+        (@arg NOTIF_COMPLETE: --notify_complete
+         "Notify immediately when a task completes.")
+        (@arg NOTIF_COPIED: --notify_copied
+         "Notify immediately when a task's results have finished copying.")
+        (@arg NOTIF_FAIL: --notify_fail
+         "Notify immediately when a task fails.")
+        (@arg NOTIF_MBROKEN: --notify_machine_broken
+         "Notify immediately when a machine is deamed broken.")
     }
     .get_matches();
 
@@ -656,6 +627,38 @@ fn main() {
     let runner = matches.value_of("RUNNER").unwrap();
     let log_dir = matches.value_of("LOG_DIR").unwrap();
     let allow_snap_fail = matches.is_present("NOSNAP");
+
+    let notifications = SlackNotifications::new(NotificationsSettings {
+        summary_interval: matches
+            .value_of("NOTIF_SUMMARY_INT")
+            .map(|v| v.parse::<usize>().expect("interval must be an integer"))
+            .unwrap_or(30),
+        running: if matches.is_present("NOTIF_RUNNING") {
+            NotificationSetting::Immediate
+        } else {
+            NotificationSetting::Summary
+        },
+        complete: if matches.is_present("NOTIF_COMPLETE") {
+            NotificationSetting::Immediate
+        } else {
+            NotificationSetting::Summary
+        },
+        results_copied: if matches.is_present("NOTIF_COPIED") {
+            NotificationSetting::Immediate
+        } else {
+            NotificationSetting::Summary
+        },
+        task_failed: if matches.is_present("NOTIF_FAIL") {
+            NotificationSetting::Immediate
+        } else {
+            NotificationSetting::Summary
+        },
+        machine_broken: if matches.is_present("NOTIF_MBROKEN") {
+            NotificationSetting::Immediate
+        } else {
+            NotificationSetting::Summary
+        },
+    });
 
     // Set the RUST_BACKTRACE environment variable so that we always get backtraces. Normally, one
     // doesn't want this because of the performance penalty, but in this case, we don't care too
@@ -668,7 +671,12 @@ fn main() {
     info!("Starting server at {}", addr);
 
     // Listen for client requests on the main thread, while we do work in the background.
-    let server = Arc::new(Server::new(runner.into(), log_dir.into(), allow_snap_fail));
+    let server = Arc::new(Server::new(
+        runner.into(),
+        log_dir.into(),
+        allow_snap_fail,
+        notifications,
+    ));
     Arc::clone(&server).start_work_thread();
     server.listen(addr);
 }

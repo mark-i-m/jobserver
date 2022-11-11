@@ -13,7 +13,7 @@ use expjobserver::{cmd_replace_machine, cmd_replace_vars, cmd_to_path, human_ts}
 
 use log::{debug, error, info, warn};
 
-use crate::SlackVisualStatus;
+use crate::notify::SlackNotifications;
 
 use super::{
     copier::{copy, CopierThreadQueue, CopierThreadResult, CopyJobInfo},
@@ -24,6 +24,16 @@ const UNKNOWN_HOST_ERROR_CLASS: &str = "error-unknown-host";
 
 /// The number of consecutive job failures before the machine is considered to be faulty.
 const MACHINE_FAILURES: usize = 4;
+
+impl Task {
+    pub fn update_state(&mut self, new: TaskState) {
+        info!(
+            "Task {} SM Update\nOLD: {:?}\nNEW: {:?}",
+            self.jid, self.state, new
+        );
+        self.state = new;
+    }
+}
 
 impl Server {
     /// Attempts to drive the given task's state machine forward one step.
@@ -39,6 +49,7 @@ impl Server {
         to_clone: &mut HashSet<u64>,
         copying_flags: Arc<Mutex<HashMap<u64, CopierThreadResult>>>,
         copy_thread_queue: Arc<Mutex<CopierThreadQueue>>,
+        notifications: &mut SlackNotifications,
     ) -> bool {
         // If the task was canceled since the last time it was driven, set the state to `Canceled`
         // so it can get garbage collected.
@@ -59,6 +70,7 @@ impl Server {
                 task,
                 machines,
                 running_job_handles,
+                notifications,
             ),
 
             TaskState::Running { index } => Self::try_drive_sm_running(
@@ -69,6 +81,7 @@ impl Server {
                 machines,
                 running_job_handles,
                 index,
+                notifications,
             ),
 
             TaskState::CheckingResults => Self::try_drive_sm_checking_results(
@@ -78,6 +91,7 @@ impl Server {
                 running_job_handles,
                 copy_thread_queue,
                 log_dir,
+                notifications,
             ),
 
             TaskState::CopyingResults { ref results_path } => {
@@ -134,7 +148,14 @@ impl Server {
             TaskState::Finalize { ref results_path } => {
                 let results_path = results_path.clone();
 
-                Self::try_drive_sm_finalize(jid, task, machines, running_job_handles, results_path)
+                Self::try_drive_sm_finalize(
+                    jid,
+                    task,
+                    machines,
+                    running_job_handles,
+                    results_path,
+                    notifications,
+                )
             }
             TaskState::Done
             | TaskState::DoneWithResults { .. }
@@ -159,7 +180,7 @@ impl Server {
                 }
 
                 // Free any associated machine.
-                Self::free_machine(jid, task, machines);
+                Self::free_machine(jid, task, machines, notifications);
 
                 // Clean up job handles
                 let _ = running_job_handles.remove(&jid).is_some();
@@ -193,6 +214,7 @@ impl Server {
                 running_job_handles,
                 to_remove,
                 remove,
+                notifications,
             ),
         }
     }
@@ -205,6 +227,7 @@ impl Server {
         task: &mut Task,
         machines: &mut HashMap<String, MachineStatus>,
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
+        notifications: &mut SlackNotifications,
     ) -> bool {
         let machine = if let TaskType::SetupTask = task.ty {
             Some(task.machine.as_ref().unwrap().clone())
@@ -230,29 +253,23 @@ impl Server {
             task.machine = Some(machine.clone());
             task.timestamp = Utc::now();
 
-            let (slack_msg, slack_svs) = match Self::run_cmd(jid, task, &machine, runner, log_dir) {
+            match Self::run_cmd(jid, task, &machine, runner, log_dir) {
                 Ok(job) => {
-                    let msg = format!("Running job {} on machine {}", jid, machine);
-
-                    info!("{msg}");
+                    info!("Running job {} on machine {}", jid, machine);
                     running_job_handles.insert(jid, job);
-
-                    (msg, SlackVisualStatus::Running)
                 }
                 Err(err) => {
-                    let msg = format!("Unable to start job {}: {}", jid, err);
-
-                    error!("{msg}");
+                    error!("Unable to start job {}: {}", jid, err);
                     task.update_state(TaskState::Error {
                         error: format!("Unable to start job {}: {}", jid, err),
                         n: 0, // first cmd failed
                     });
                     task.done_timestamp = Some(Utc::now());
-
-                    (msg, SlackVisualStatus::Error)
                 }
-            };
-            task.send_notification(slack_svs, &slack_msg);
+            }
+            if task.notify {
+                notifications.enqueue_task_notification(task);
+            }
 
             true
         } else {
@@ -272,6 +289,7 @@ impl Server {
         _machines: &mut HashMap<String, MachineStatus>,
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         idx: usize,
+        notifications: &mut SlackNotifications,
     ) -> bool {
         let job_proc_info = running_job_handles
             .get_mut(&jid)
@@ -292,11 +310,12 @@ impl Server {
                     // If this is the last command of the task, then we are done.
                     // Otherwise, start the next command.
                     if idx == task.cmds.len() - 1 {
-                        let msg = format!("Task {} is complete. Need to check for results.", jid);
-                        info!("{msg}");
-
-                        task.send_notification(SlackVisualStatus::Pending, &msg);
+                        info!("Task {} is complete. Need to check for results.", jid);
                         task.update_state(TaskState::CheckingResults);
+
+                        if task.notify {
+                            notifications.enqueue_task_notification(task);
+                        }
                     } else {
                         // Move to the next task and then attempt to run it.
                         task.update_state(TaskState::Running { index: idx + 1 });
@@ -331,9 +350,12 @@ impl Server {
                     }
                 } else {
                     let msg = format!("Command {} failed: {}", idx, status);
-                    task.send_notification(SlackVisualStatus::Error, &msg);
                     task.update_state(TaskState::Error { error: msg, n: idx });
                     task.done_timestamp = Some(Utc::now());
+
+                    if task.notify {
+                        notifications.enqueue_task_notification(task);
+                    }
                 }
 
                 true
@@ -349,9 +371,12 @@ impl Server {
                 {
                     let msg = format!("Task {} timedout. Cancelling.", jid);
                     info!("{msg}");
-                    task.send_notification(SlackVisualStatus::Timeout, &msg);
                     task.timedout = Some(idx);
                     task.canceled = Some(false); // don't forget, just cancel.
+
+                    if task.notify {
+                        notifications.enqueue_task_notification(task);
+                    }
 
                     true
                 } else {
@@ -376,6 +401,7 @@ impl Server {
         _running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         copy_thread_queue: Arc<Mutex<CopierThreadQueue>>,
         log_dir: &str,
+        notifications: &mut SlackNotifications,
     ) -> bool {
         // The job must have run successfully to get here, so we can reset the machine's failure
         // count. The machine can be `None` if it is a setup task.
@@ -406,7 +432,7 @@ impl Server {
         };
 
         // If there is such a path, then spawn a thread to copy the file to this machine
-        let slack = match (&task.cp_results, &results_path) {
+        match (&task.cp_results, &results_path) {
             (Some(cp_results), Some(results_path)) => {
                 let machine = task.machine.as_ref().unwrap().clone();
 
@@ -424,44 +450,29 @@ impl Server {
                 task.update_state(TaskState::CopyingResults {
                     results_path: results_path.clone(),
                 });
-
-                let msg = format!("Task {} results copied", jid);
-                Some((SlackVisualStatus::SuccessNice, msg))
             }
 
             (Some(_), None) => {
-                let msg = format!("Task {} expected results, but none were produced.", jid);
-
-                warn!("{msg}");
+                warn!("Task {} expected results, but none were produced.", jid);
                 task.update_state(TaskState::Finalize { results_path: None });
-
-                Some((SlackVisualStatus::Warning, msg))
             }
 
             (None, Some(_)) => {
-                let msg = format!(
+                warn!(
                     "Discarding results for task {} even though they were produced.",
                     jid
                 );
-
-                warn!("{msg}");
                 task.update_state(TaskState::Finalize { results_path: None });
-
-                Some((SlackVisualStatus::Warning, msg))
             }
 
             (None, None) => {
-                let msg = format!("Task {} completed without results.", jid);
-
-                info!("{msg}");
+                info!("Task {} completed without results.", jid);
                 task.update_state(TaskState::Finalize { results_path: None });
-
-                Some((SlackVisualStatus::Success, msg))
             }
-        };
+        }
 
-        if let Some((svs, msg)) = slack {
-            task.send_notification(svs, &msg);
+        if task.notify {
+            notifications.enqueue_task_notification(task);
         }
 
         true
@@ -473,6 +484,7 @@ impl Server {
         machines: &mut HashMap<String, MachineStatus>,
         _running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         results_path: Option<String>,
+        notifications: &mut SlackNotifications,
     ) -> bool {
         let machine = task.machine.as_ref().unwrap();
 
@@ -505,7 +517,7 @@ impl Server {
                 );
 
                 // Add machine (or free it if it was already part of the pool)
-                let already = Self::free_machine(jid, task, machines);
+                let already = Self::free_machine(jid, task, machines, notifications);
                 if !already {
                     machines.insert(
                         machine.clone(),
@@ -522,7 +534,7 @@ impl Server {
                 // If this is a setup task, we still want to free machines that were already part
                 // of the pool.
                 info!("Releasing machine {:?}", machine);
-                Self::free_machine(jid, task, machines);
+                Self::free_machine(jid, task, machines, notifications);
             }
         }
 
@@ -546,6 +558,7 @@ impl Server {
         running_job_handles: &mut HashMap<u64, JobProcessInfo>,
         to_remove: &mut HashSet<u64>,
         remove: bool,
+        notifications: &mut SlackNotifications,
     ) -> bool {
         info!("Canceling task {}", jid);
 
@@ -556,7 +569,7 @@ impl Server {
         }
 
         // Free any associated machine.
-        Self::free_machine(jid, task, machines);
+        Self::free_machine(jid, task, machines, notifications);
 
         // Add to the list to be reaped, if the job is to be removed.
         if remove {
@@ -638,7 +651,12 @@ impl Server {
 
     /// Frees the machine if it is associated with the given task. Does nothing if this machine is
     /// not running this task. Returns true if a machine was freed.
-    fn free_machine(jid: u64, task: &Task, machines: &mut HashMap<String, MachineStatus>) -> bool {
+    fn free_machine(
+        jid: u64,
+        task: &Task,
+        machines: &mut HashMap<String, MachineStatus>,
+        notifications: &mut SlackNotifications,
+    ) -> bool {
         // We need to ensure that the machine is running this task and not another, since it may
         // have been freed and allocated already.
         if let Some(machine) = task.machine.as_ref() {
@@ -652,6 +670,7 @@ impl Server {
                         // different class.
                         if machine_status.failures >= MACHINE_FAILURES {
                             machine_status.class = format!("{}-broken", machine_status.class);
+                            notifications.enqueue_machine_notification(machine);
                         }
 
                         return true;
