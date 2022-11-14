@@ -267,9 +267,7 @@ impl Server {
                     task.done_timestamp = Some(Utc::now());
                 }
             }
-            if task.notify {
-                notifications.enqueue_task_notification(task);
-            }
+            notifications.enqueue_task_notification(task);
 
             true
         } else {
@@ -313,9 +311,7 @@ impl Server {
                         info!("Task {} is complete. Need to check for results.", jid);
                         task.update_state(TaskState::CheckingResults);
 
-                        if task.notify {
-                            notifications.enqueue_task_notification(task);
-                        }
+                        notifications.enqueue_task_notification(task);
                     } else {
                         // Move to the next task and then attempt to run it.
                         task.update_state(TaskState::Running { index: idx + 1 });
@@ -353,9 +349,7 @@ impl Server {
                     task.update_state(TaskState::Error { error: msg, n: idx });
                     task.done_timestamp = Some(Utc::now());
 
-                    if task.notify {
-                        notifications.enqueue_task_notification(task);
-                    }
+                    notifications.enqueue_task_notification(task);
                 }
 
                 true
@@ -374,9 +368,7 @@ impl Server {
                     task.timedout = Some(idx);
                     task.canceled = Some(false); // don't forget, just cancel.
 
-                    if task.notify {
-                        notifications.enqueue_task_notification(task);
-                    }
+                    notifications.enqueue_task_notification(task);
 
                     true
                 } else {
@@ -471,9 +463,7 @@ impl Server {
             }
         }
 
-        if task.notify {
-            notifications.enqueue_task_notification(task);
-        }
+        notifications.enqueue_task_notification(task);
 
         true
     }

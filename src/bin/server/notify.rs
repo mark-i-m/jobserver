@@ -66,6 +66,12 @@ impl SlackNotifications {
 
         let t = Notification::TaskEvent { jid: task.jid };
 
+        // If the task isn't requesting notification, then we will only include it in summaries.
+        if !task.notify {
+            self.enqueued_summarize.insert(t);
+            return;
+        }
+
         match &task.state {
             TaskState::Running { .. } => match self.settings.running {
                 Immediate => self.enqueued_immediate.insert(t),
@@ -108,6 +114,7 @@ impl SlackNotifications {
         self.enqueued_summarize
             .extend(self.enqueued_immediate.iter().cloned());
     }
+
     pub(crate) fn enqueue_machine_notification(&mut self, machine: &str) {
         use NotificationSetting::*;
 
