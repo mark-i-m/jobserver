@@ -186,7 +186,7 @@ impl Server {
                 let mut done_no_res_tasks = Vec::new();
                 let mut done_res_tasks = Vec::new();
 
-                let mut matrices = Vec::new();
+                let mut matrices = BTreeSet::new();
 
                 let mut done_exp_res_tasks = Vec::new();
                 let mut error_tasks = Vec::new();
@@ -240,7 +240,7 @@ impl Server {
                                 }
 
                                 if let Some(matrix) = task.matrix {
-                                    matrices.push(matrix);
+                                    matrices.insert(matrix);
                                 }
                             }
                         }
