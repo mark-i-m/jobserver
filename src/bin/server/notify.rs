@@ -302,45 +302,43 @@ impl Server {
                     (done, waiting, running, failed)
                 }
 
-                if running_tasks.is_empty() {
-                    msg.push_str("    • :running: No new tasks running.\n");
-                } else {
+                if running_tasks.is_empty()
+                    && check_res_tasks.is_empty()
+                    && copy_res_tasks.is_empty()
+                    && done_no_res_tasks.is_empty()
+                    && done_exp_res_tasks.is_empty()
+                    && matrices.is_empty()
+                {
+                    msg.push_str(
+                        "    • :shrug: No new tasks running, completed, or copying results.\n",
+                    );
+                }
+
+                if !running_tasks.is_empty() {
                     msg.push_str("    • :running: Started running:");
                     list_jids(&mut msg, running_tasks);
                     msg.push_str("\n")
                 }
 
-                if check_res_tasks.is_empty() {
-                    msg.push_str(
-                        "    • :hourglass_flowing_sand: No new tasks checking for results.\n",
-                    );
-                } else {
+                if !check_res_tasks.is_empty() {
                     msg.push_str("    • :hourglass_flowing_sand: Completed, checking for results:");
                     list_jids(&mut msg, check_res_tasks);
                     msg.push_str("\n")
                 }
 
-                if copy_res_tasks.is_empty() {
-                    msg.push_str("    • :hourglass_flowing_sand: No new tasks copying results.\n");
-                } else {
+                if !copy_res_tasks.is_empty() {
                     msg.push_str("    • :hourglass_flowing_sand: Completed, copying results:");
                     list_jids(&mut msg, copy_res_tasks);
                     msg.push_str("\n")
                 }
 
-                if done_no_res_tasks.is_empty() {
-                    msg.push_str(
-                        "    • :large_green_circle: No new tasks completed without results.\n",
-                    );
-                } else {
+                if !done_no_res_tasks.is_empty() {
                     msg.push_str("    • :large_green_circle: Completed without results:");
                     list_jids(&mut msg, done_no_res_tasks);
                     msg.push_str("\n")
                 }
 
-                if done_res_tasks.is_empty() {
-                    msg.push_str("    • :tada: No new tasks completed with results.\n");
-                } else {
+                if !done_res_tasks.is_empty() {
                     msg.push_str("    • :tada: Completed with results:");
                     list_jids(&mut msg, done_res_tasks);
                     msg.push_str("\n")
@@ -361,40 +359,36 @@ impl Server {
                     }
                 }
 
-                msg.push_str("\n*Warnings and Errors*\n");
+                if !done_exp_res_tasks.is_empty()
+                    || !timeout_tasks.is_empty()
+                    || !error_tasks.is_empty()
+                    || !broken_machines.is_empty()
+                {
+                    msg.push_str("\n*Warnings and Errors*\n");
 
-                if done_exp_res_tasks.is_empty() {
-                    msg.push_str(
-                        "    • :warning: No new tasks expected results but didn't produce any.\n",
-                    );
-                } else {
-                    msg.push_str("    • :warning: Completed without expected results:");
-                    list_jids(&mut msg, done_exp_res_tasks);
-                    msg.push_str("\n")
-                }
+                    if !done_exp_res_tasks.is_empty() {
+                        msg.push_str("    • :warning: Completed without expected results:");
+                        list_jids(&mut msg, done_exp_res_tasks);
+                        msg.push_str("\n")
+                    }
 
-                if timeout_tasks.is_empty() {
-                    msg.push_str("    • :alarm_clock: No tasks timed out.\n");
-                } else {
-                    msg.push_str("    • :alarm_clock: Timed out:");
-                    list_jids(&mut msg, timeout_tasks);
-                    msg.push_str("\n")
-                }
+                    if !timeout_tasks.is_empty() {
+                        msg.push_str("    • :alarm_clock: Timed out:");
+                        list_jids(&mut msg, timeout_tasks);
+                        msg.push_str("\n")
+                    }
 
-                if error_tasks.is_empty() {
-                    msg.push_str("    • :x: No tasks failed.\n");
-                } else {
-                    msg.push_str("    • :x: Failed:");
-                    list_jids(&mut msg, error_tasks);
-                    msg.push_str("\n")
-                }
+                    if !error_tasks.is_empty() {
+                        msg.push_str("    • :x: Failed:");
+                        list_jids(&mut msg, error_tasks);
+                        msg.push_str("\n")
+                    }
 
-                if broken_machines.is_empty() {
-                    msg.push_str("    • :boom: No machines marked as broken.\n");
-                } else {
-                    msg.push_str("    • :boom: Machines marked as broken:\n");
-                    for machine in broken_machines.into_iter() {
-                        msg.push_str(&format!("      • {machine}\n"));
+                    if !broken_machines.is_empty() {
+                        msg.push_str("    • :boom: Machines marked as broken:\n");
+                        for machine in broken_machines.into_iter() {
+                            msg.push_str(&format!("      • {machine}\n"));
+                        }
                     }
                 }
 
