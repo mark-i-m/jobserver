@@ -315,31 +315,46 @@ impl Server {
                 }
 
                 if !running_tasks.is_empty() {
-                    msg.push_str("    • :running: Started running:");
+                    msg.push_str(&format!(
+                        "    • :running: Started running ({}):",
+                        running_tasks.len()
+                    ));
                     list_jids(&mut msg, running_tasks);
                     msg.push_str("\n")
                 }
 
                 if !check_res_tasks.is_empty() {
-                    msg.push_str("    • :hourglass_flowing_sand: Completed, checking for results:");
+                    msg.push_str(&format!(
+                        "    • :hourglass_flowing_sand: Completed, checking for results ({}):",
+                        check_res_tasks.len()
+                    ));
                     list_jids(&mut msg, check_res_tasks);
                     msg.push_str("\n")
                 }
 
                 if !copy_res_tasks.is_empty() {
-                    msg.push_str("    • :hourglass_flowing_sand: Completed, copying results:");
+                    msg.push_str(&format!(
+                        "    • :hourglass_flowing_sand: Completed, copying results ({}):",
+                        copy_res_tasks.len()
+                    ));
                     list_jids(&mut msg, copy_res_tasks);
                     msg.push_str("\n")
                 }
 
                 if !done_no_res_tasks.is_empty() {
-                    msg.push_str("    • :large_green_circle: Completed without results:");
+                    msg.push_str(&format!(
+                        "    • :large_green_circle: Completed without results ({}):",
+                        done_no_res_tasks.len()
+                    ));
                     list_jids(&mut msg, done_no_res_tasks);
                     msg.push_str("\n")
                 }
 
                 if !done_res_tasks.is_empty() {
-                    msg.push_str("    • :tada: Completed with results:");
+                    msg.push_str(&format!(
+                        "    • :tada: Completed with results ({}):",
+                        done_res_tasks.len()
+                    ));
                     list_jids(&mut msg, done_res_tasks);
                     msg.push_str("\n")
                 }
