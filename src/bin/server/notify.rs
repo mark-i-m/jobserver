@@ -306,7 +306,7 @@ impl Server {
                     && check_res_tasks.is_empty()
                     && copy_res_tasks.is_empty()
                     && done_no_res_tasks.is_empty()
-                    && done_exp_res_tasks.is_empty()
+                    && done_res_tasks.is_empty()
                     && matrices.is_empty()
                 {
                     msg.push_str(
