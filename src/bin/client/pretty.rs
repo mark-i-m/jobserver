@@ -8,6 +8,8 @@ use expjobserver::{human_ts, protocol};
 
 use prettytable::{cell, row, Table};
 
+use crate::TagInfo;
+
 use super::{JobInfo, JobOrMatrixInfo, MachineInfo, MatrixInfo, Status};
 
 pub(crate) fn print_response(resp: protocol::response::ResponseType) {
@@ -99,13 +101,15 @@ fn print_summary(items: &[JobOrMatrixInfo]) {
                 items
                     .iter()
                     .filter_map(|jomi| {
-                        if let JobOrMatrixInfo::Matrix(m) = jomi {
-                            Some(m)
+                        if let JobOrMatrixInfo::Matrix(MatrixInfo { jobs, .. })
+                        | JobOrMatrixInfo::Tag(TagInfo { jobs, .. }) = jomi
+                        {
+                            Some(jobs)
                         } else {
                             None
                         }
                     })
-                    .flat_map(|matrix_info| matrix_info.jobs.iter()),
+                    .flatten(),
             ),
     );
 
