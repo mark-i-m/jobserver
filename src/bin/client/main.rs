@@ -1,6 +1,6 @@
 //! Client implmentation
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::path::PathBuf;
@@ -1038,8 +1038,16 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
         JobListMode::Jids(ref jids) => jids.clone(),
         JobListMode::Running => running.clone().into_iter().collect::<BTreeSet<_>>(),
         JobListMode::SuffixRunning(_) => {
+            let mut any_tags = BTreeMap::new();
+
+            // Build a list of all tags associated with running jobs.
+            for job in running.iter() {
+                let Some(JobInfo { tag: Some(tag), .. }) = stat_job(addr, *job) else {continue};
+                any_tags.insert(job, Jid::new(tag));
+            }
+
             // Like `Running` but we don't need to expand matrices, so if a job is part of a
-            // matrix, then just replace the jid with the matrix id.
+            // matrix or tag, then just replace the jid with the matrix id.
             running
                 .clone()
                 .into_iter()
@@ -1049,11 +1057,12 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
                         .find_map(|m| m.1.jobs.iter().any(|j| *j == job).then_some(*m.0))
                         .unwrap_or(job)
                 })
+                .map(|job| any_tags.remove(&job).unwrap_or(job))
                 .collect::<BTreeSet<_>>()
         }
         _ => BTreeSet::new(),
     };
-    let selected_ids = {
+    let selected_ids: BTreeSet<_> = {
         let sorted_ids = {
             let jids = jids.iter().cloned();
             let mut ids: Vec<_> = match mode {
@@ -1071,10 +1080,8 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
         };
 
         let len = sorted_ids.len();
-        let mut selected_ids: Vec<_> = sorted_ids
+        sorted_ids
             .into_iter()
-            // filter out already selected ids...
-            .filter(|jid| !specified_ids.contains(jid))
             .enumerate()
             .filter(|(i, j)| match mode {
                 JobListMode::Suffix(n) | JobListMode::SuffixRunning(n) => *i + n >= len,
@@ -1083,16 +1090,12 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
                 JobListMode::Last => *i == len - 1,
             })
             .map(|(_, j)| j)
-            .collect();
-
-        selected_ids.extend(specified_ids.iter());
-
-        selected_ids
+            .collect()
     };
 
     let mut processed_tags = HashSet::new();
     let mut info = vec![];
-    for id in selected_ids {
+    for &id in selected_ids.union(&specified_ids) {
         if let Some(MatrixInfoShallow {
             cmd,
             class,
@@ -1120,6 +1123,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
                 }
                 info.push(JobOrMatrixInfo::Tag(TagInfo { id, jobs: tag_jobs }));
             }
+            processed_tags.insert(id);
         } else if let Some(job_info) = stat_job(addr, id) {
             // For tagged jobs that were not explicitly specified, we try to emulate matrices by
             // lumping them in under the appropriate tag instead of individually.
