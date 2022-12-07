@@ -260,7 +260,11 @@ pub(crate) fn build() -> clap::App<'static, 'static> {
                 (@arg TAIL: -t --tail conflicts_with[LESS]
                  "Pass the log path to `tail -f`")
                 (@arg R: -R requires[LESS]
-                 "Pass the -R flag to less.")
+                 "Pass the -R flag to less. This prints raw escape commands, \
+                  allowing them to display properly.")
+                (@arg Z: -z requires[LESS]
+                 "Use zless for the logfile, instead of less. Helpful if you \
+                  have compressed (gzipped) the file.")
             )
 
             (@subcommand matrix =>
