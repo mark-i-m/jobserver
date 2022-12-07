@@ -466,10 +466,21 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                 .map(|path| if is_err { path + ".err" } else { path })
                 .collect();
 
+            let is_compressed = sub_m.is_present("Z");
+            for p in paths.iter() {
+                if !is_compressed
+                    && !PathBuf::from(p).exists()
+                    && PathBuf::from(p.to_owned() + ".gz").exists()
+                {
+                    panic!("{} is compressed. Use -z.", p);
+                }
+            }
+
             if sub_m.is_present("LESS") {
                 #[cfg(target_family = "unix")]
                 {
-                    let mut cmd = std::process::Command::new("less");
+                    let mut cmd =
+                        std::process::Command::new(if is_compressed { "zless" } else { "less" });
                     let mut cmd = &mut cmd;
                     if sub_m.is_present("R") {
                         cmd = cmd.arg("-R");
