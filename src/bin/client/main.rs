@@ -1073,6 +1073,8 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
         let len = sorted_ids.len();
         let mut selected_ids: Vec<_> = sorted_ids
             .into_iter()
+            // filter out already selected ids...
+            .filter(|jid| !specified_ids.contains(jid))
             .enumerate()
             .filter(|(i, j)| match mode {
                 JobListMode::Suffix(n) | JobListMode::SuffixRunning(n) => *i + n >= len,
