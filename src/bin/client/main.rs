@@ -391,6 +391,7 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                 .value_of("N")
                 .map(|s| s.parse().unwrap())
                 .unwrap_or(DEFAULT_LS_N);
+            let is_n = sub_m.is_present("N");
             let is_after = sub_m.is_present("AFTER");
             let is_running = sub_m.is_present("RUNNING");
             let jids = sub_m
@@ -405,8 +406,10 @@ fn handle_job_cmd(addr: &str, matches: &clap::ArgMatches<'_>, line: Option<u64>)
                 .unwrap_or_else(|| {
                     if is_running {
                         JobListMode::Running
-                    } else {
+                    } else if is_n {
                         JobListMode::Suffix(suffix)
+                    } else {
+                        JobListMode::SuffixRunning(suffix)
                     }
                 });
             let jobs = list_jobs(addr, jids);
@@ -941,6 +944,9 @@ enum JobListMode {
     /// List a suffix of jobs (the `usize` is the length of the suffix).
     Suffix(usize),
 
+    /// List a suffix of jobs (the `usize` is the length of the suffix) plus any running jobs.
+    SuffixRunning(usize),
+
     /// List the very last jid. This will always be a job, and will always be the last job
     /// created. This is not the same as `Suffix(1)` which may return a matrix.
     Last,
@@ -1031,6 +1037,20 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
     let specified_ids = match mode {
         JobListMode::Jids(ref jids) => jids.clone(),
         JobListMode::Running => running.clone().into_iter().collect::<BTreeSet<_>>(),
+        JobListMode::SuffixRunning(_) => {
+            // Like `Running` but we don't need to expand matrices, so if a job is part of a
+            // matrix, then just replace the jid with the matrix id.
+            running
+                .clone()
+                .into_iter()
+                .map(|job| {
+                    matrices
+                        .iter()
+                        .find_map(|m| m.1.jobs.iter().any(|j| *j == job).then_some(*m.0))
+                        .unwrap_or(job)
+                })
+                .collect::<BTreeSet<_>>()
+        }
         _ => BTreeSet::new(),
     };
     let selected_ids = {
@@ -1041,6 +1061,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
                     .chain(matrices.values().flat_map(|m| m.jobs.iter().cloned()))
                     .collect(),
                 JobListMode::Suffix(_)
+                | JobListMode::SuffixRunning(_)
                 | JobListMode::After(_)
                 | JobListMode::Jids(_)
                 | JobListMode::Running => jids.chain(matrices.keys().cloned()).collect(),
@@ -1054,7 +1075,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
             .into_iter()
             .enumerate()
             .filter(|(i, j)| match mode {
-                JobListMode::Suffix(n) => *i + n >= len,
+                JobListMode::Suffix(n) | JobListMode::SuffixRunning(n) => *i + n >= len,
                 JobListMode::After(jid) => *j >= jid,
                 JobListMode::Jids(_) | JobListMode::Running => false,
                 JobListMode::Last => *i == len - 1,
