@@ -131,7 +131,7 @@ impl SlackNotifications {
 
 impl Server {
     /// Process all enqueued notifications.
-    /// NOTE: this grabs a lock!
+    /// NOTE: this grabs locks!
     pub fn process_notifications(&self) {
         // Careful about lock ordering!
         let locked_variables = self.variables.lock().unwrap();
@@ -171,7 +171,7 @@ impl Server {
             }
         }
 
-        // The send a summary if enough time has elapsed.
+        // Then send a summary if enough time has elapsed.
         if Instant::now() - locked_notif.last_summary
             > Duration::from_secs(60 * locked_notif.settings.summary_interval as u64)
         {
@@ -199,49 +199,46 @@ impl Server {
                             broken_machines.push(machine);
                         }
                         Notification::TaskEvent { jid } => {
-                            if let Some(task) = locked_tasks.get(&jid) {
-                                match &task.state {
-                                    TaskState::Running { .. } => {
-                                        running_tasks.push(jid);
-                                    }
-                                    TaskState::CheckingResults => {
-                                        check_res_tasks.push(jid);
-                                    }
-                                    TaskState::CopyingResults { .. } => {
-                                        copy_res_tasks.push(jid);
-                                    }
-                                    TaskState::Done
-                                    | TaskState::Finalize { results_path: None }
-                                        if matches!(task.cp_results, None) =>
-                                    {
-                                        done_no_res_tasks.push(jid);
-                                    }
-                                    TaskState::Done
-                                    | TaskState::Finalize { results_path: None } => {
-                                        done_exp_res_tasks.push(jid);
-                                    }
-                                    TaskState::Finalize {
-                                        results_path: Some(..),
-                                    }
-                                    | TaskState::DoneWithResults { .. } => {
-                                        done_res_tasks.push(jid);
-                                    }
-
-                                    TaskState::Error { .. } | TaskState::ErrorDone { .. }
-                                        if task.timedout.is_some() =>
-                                    {
-                                        timeout_tasks.push(jid);
-                                    }
-                                    TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
-                                        error_tasks.push(jid);
-                                    }
-
-                                    _ => {}
+                            let Some(task) = locked_tasks.get(&jid) else { continue };
+                            match &task.state {
+                                TaskState::Running { .. } => {
+                                    running_tasks.push(jid);
+                                }
+                                TaskState::CheckingResults => {
+                                    check_res_tasks.push(jid);
+                                }
+                                TaskState::CopyingResults { .. } => {
+                                    copy_res_tasks.push(jid);
+                                }
+                                TaskState::Done | TaskState::Finalize { results_path: None }
+                                    if matches!(task.cp_results, None) =>
+                                {
+                                    done_no_res_tasks.push(jid);
+                                }
+                                TaskState::Done | TaskState::Finalize { results_path: None } => {
+                                    done_exp_res_tasks.push(jid);
+                                }
+                                TaskState::Finalize {
+                                    results_path: Some(..),
+                                }
+                                | TaskState::DoneWithResults { .. } => {
+                                    done_res_tasks.push(jid);
                                 }
 
-                                if let Some(matrix) = task.matrix {
-                                    matrices.insert(matrix);
+                                TaskState::Error { .. } | TaskState::ErrorDone { .. }
+                                    if task.timedout.is_some() =>
+                                {
+                                    timeout_tasks.push(jid);
                                 }
+                                TaskState::Error { .. } | TaskState::ErrorDone { .. } => {
+                                    error_tasks.push(jid);
+                                }
+
+                                _ => {}
+                            }
+
+                            if let Some(matrix) = task.matrix {
+                                matrices.insert(matrix);
                             }
                         }
                     }
@@ -255,9 +252,20 @@ impl Server {
 
                 msg.push_str("*Summary*\n\n");
 
-                fn list_jids(out: &mut String, jids: Vec<u64>) {
-                    for jid in jids.into_iter() {
+                fn list_jids(out: &mut String, jids: &[u64]) {
+                    for jid in jids.iter() {
                         out.push_str(&format!(" {jid}"));
+                    }
+                }
+
+                fn list_jids_cmds(
+                    out: &mut String,
+                    locked_tasks: &BTreeMap<u64, Task>,
+                    jids: Vec<u64>,
+                ) {
+                    for jid in jids.into_iter() {
+                        let Some(task) = locked_tasks.get(&jid) else { continue };
+                        out.push_str(&format!("\n        • {jid}: {}", task.current_cmd()));
                     }
                 }
 
@@ -319,7 +327,7 @@ impl Server {
                         "    • :running: Started running ({}):",
                         running_tasks.len()
                     ));
-                    list_jids(&mut msg, running_tasks);
+                    list_jids(&mut msg, &running_tasks);
                     msg.push_str("\n")
                 }
 
@@ -328,7 +336,7 @@ impl Server {
                         "    • :hourglass_flowing_sand: Completed, checking for results ({}):",
                         check_res_tasks.len()
                     ));
-                    list_jids(&mut msg, check_res_tasks);
+                    list_jids(&mut msg, &check_res_tasks);
                     msg.push_str("\n")
                 }
 
@@ -337,7 +345,7 @@ impl Server {
                         "    • :hourglass_flowing_sand: Completed, copying results ({}):",
                         copy_res_tasks.len()
                     ));
-                    list_jids(&mut msg, copy_res_tasks);
+                    list_jids(&mut msg, &copy_res_tasks);
                     msg.push_str("\n")
                 }
 
@@ -346,7 +354,7 @@ impl Server {
                         "    • :large_green_circle: Completed without results ({}):",
                         done_no_res_tasks.len()
                     ));
-                    list_jids(&mut msg, done_no_res_tasks);
+                    list_jids(&mut msg, &done_no_res_tasks);
                     msg.push_str("\n")
                 }
 
@@ -355,7 +363,7 @@ impl Server {
                         "    • :tada: Completed with results ({}):",
                         done_res_tasks.len()
                     ));
-                    list_jids(&mut msg, done_res_tasks);
+                    list_jids(&mut msg, &done_res_tasks);
                     msg.push_str("\n")
                 }
 
@@ -383,19 +391,19 @@ impl Server {
 
                     if !done_exp_res_tasks.is_empty() {
                         msg.push_str("    • :warning: Completed without expected results:");
-                        list_jids(&mut msg, done_exp_res_tasks);
+                        list_jids_cmds(&mut msg, &*locked_tasks, done_exp_res_tasks);
                         msg.push_str("\n")
                     }
 
                     if !timeout_tasks.is_empty() {
                         msg.push_str("    • :alarm_clock: Timed out:");
-                        list_jids(&mut msg, timeout_tasks);
+                        list_jids_cmds(&mut msg, &*locked_tasks, timeout_tasks);
                         msg.push_str("\n")
                     }
 
                     if !error_tasks.is_empty() {
                         msg.push_str("    • :x: Failed:");
-                        list_jids(&mut msg, error_tasks);
+                        list_jids_cmds(&mut msg, &*locked_tasks, error_tasks);
                         msg.push_str("\n")
                     }
 
@@ -405,6 +413,12 @@ impl Server {
                             msg.push_str(&format!("      • {machine}\n"));
                         }
                     }
+                }
+
+                if !done_no_res_tasks.is_empty() || !done_res_tasks.is_empty() {
+                    msg.push_str("\n*Done (Details)*");
+                    list_jids_cmds(&mut msg, &*locked_tasks, done_no_res_tasks);
+                    list_jids_cmds(&mut msg, &*locked_tasks, done_res_tasks);
                 }
 
                 send_slack_notification(slack_api, &msg);
@@ -434,6 +448,15 @@ impl Server {
 }
 
 impl Task {
+    pub fn current_cmd(&self) -> &str {
+        match self.state {
+            TaskState::Error { n, .. }
+            | TaskState::ErrorDone { n, .. }
+            | TaskState::Running { index: n } => &self.cmds[n],
+            _ => self.cmds.last().as_ref().unwrap(),
+        }
+    }
+
     pub fn send_individual_notification(&self, slack_api: &str, slack_user: Option<&String>) {
         let (indicator, msg) = match &self.state {
             TaskState::Running { .. } => (
@@ -490,8 +513,9 @@ impl Task {
             | TaskState::Canceled { .. } => unreachable!(),
         };
 
+        let cmd = self.current_cmd();
         let msg = slack_user
-            .map(|u| format!("<@{u}> {indicator} Task {}: {msg}", self.jid))
+            .map(|u| format!("<@{u}> {indicator} Task {}: {msg}\n\n{cmd}", self.jid))
             .unwrap_or(msg.to_string());
 
         send_slack_notification(slack_api, &msg);
