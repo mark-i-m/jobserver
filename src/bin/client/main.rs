@@ -1060,20 +1060,31 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
                 .map(|job| any_tags.remove(&job).unwrap_or(job))
                 .collect::<BTreeSet<_>>()
         }
+        JobListMode::Last => {
+            let mut ret = BTreeSet::new();
+            let last = jids
+                .iter()
+                .cloned()
+                .chain(
+                    matrices
+                        .values()
+                        .map(|m| m.jobs.iter().max().cloned().unwrap_or(Jid::new(0))),
+                )
+                .max()
+                .expect("No last task exists.");
+            ret.insert(last);
+            ret
+        }
         _ => BTreeSet::new(),
     };
     let selected_ids: BTreeSet<_> = {
         let sorted_ids = {
             let jids = jids.iter().cloned();
             let mut ids: Vec<_> = match mode {
-                JobListMode::Last => jids
-                    .chain(matrices.values().flat_map(|m| m.jobs.iter().cloned()))
-                    .collect(),
-                JobListMode::Suffix(_)
-                | JobListMode::SuffixRunning(_)
-                | JobListMode::After(_)
-                | JobListMode::Jids(_)
-                | JobListMode::Running => jids.chain(matrices.keys().cloned()).collect(),
+                JobListMode::Last | JobListMode::Jids(_) | JobListMode::Running => Vec::new(),
+                JobListMode::Suffix(_) | JobListMode::SuffixRunning(_) | JobListMode::After(_) => {
+                    jids.chain(matrices.keys().cloned()).collect()
+                }
             };
             ids.sort();
             ids
@@ -1086,8 +1097,7 @@ fn list_jobs(addr: &str, mode: JobListMode) -> Vec<JobOrMatrixInfo> {
             .filter(|(i, j)| match mode {
                 JobListMode::Suffix(n) | JobListMode::SuffixRunning(n) => *i + n >= len,
                 JobListMode::After(jid) => *j >= jid,
-                JobListMode::Jids(_) | JobListMode::Running => false,
-                JobListMode::Last => *i == len - 1,
+                JobListMode::Jids(_) | JobListMode::Last | JobListMode::Running => false,
             })
             .map(|(_, j)| j)
             .collect()
