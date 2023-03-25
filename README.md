@@ -1,6 +1,6 @@
 # `expjobserver`
 
-![Screenshot of `j job ls`][screenshot.png]
+![Screenshot of `j job ls`](screenshot.png)
 
 This is a job server and client for running many experiments across many test
 machines. In some sense, it is like a simple cluster manager.
